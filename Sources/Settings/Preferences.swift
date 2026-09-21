@@ -51,6 +51,11 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(phoneLinkPort, forKey: Keys.phoneLinkPort) }
     }
 
+    /// Optional adapter for reaching a remote session. Off does not hide a
+    /// reading that is already coming from an active connection.
+    @Published var herdrEnabled: Bool {
+        didSet { defaults.set(herdrEnabled, forKey: Keys.herdrEnabled) }
+    }
 
     @Published var lmstudioEndpoint: String {
         didSet { defaults.set(lmstudioEndpoint, forKey: Keys.lmstudioEndpoint) }
@@ -440,6 +445,7 @@ final class Preferences: ObservableObject {
         static let ollamaEndpoint = "ollamaEndpoint"
         static let phoneLinkEnabled = "phoneLinkEnabled"
         static let phoneLinkPort = "phoneLinkPort"
+        static let herdrEnabled = "herdrEnabled"
 
         static let lmstudioEndpoint = "lmstudioEndpoint"
         static let introducedOllama = "introducedOllama"
@@ -662,6 +668,11 @@ final class Preferences: ObservableObject {
         // says where it listens, and 1234 is what it ships with.
         self.phoneLinkEnabled = defaults.object(forKey: Keys.phoneLinkEnabled) as? Bool ?? false
         self.phoneLinkPort = defaults.object(forKey: Keys.phoneLinkPort) as? Int ?? 8788
+        let herdr = defaults.object(forKey: Keys.herdrEnabled) as? Bool ?? false
+        self.herdrEnabled = herdr
+        if defaults.object(forKey: Keys.herdrEnabled) == nil {
+            defaults.set(false, forKey: Keys.herdrEnabled)
+        }
 
         self.lmstudioEndpoint = (try? LMStudioEndpoint.parse(
             defaults.string(forKey: Keys.lmstudioEndpoint)
@@ -826,6 +837,12 @@ final class Preferences: ObservableObject {
     func isConnected(_ providerID: String) -> Bool {
         if Self.isModelCell(providerID) {
             return !disabledModels.contains(providerID)
+        }
+        if ProviderSnapshot.remoteFamilyPrefix(providerID) != nil {
+            if seenProviders.contains(providerID) {
+                return connectedProviders.contains(providerID)
+            }
+            return true
         }
         if defaults.object(forKey: Keys.connected) != nil {
             return connectedProviders.contains(providerID)

@@ -31,10 +31,12 @@ final class UsageStore: ObservableObject {
     @Published private(set) var providerAccountRevision = 0
 
     private let providers: [UsageProvider]
+    private var remoteConnections: [RemoteUsageConnection]
 
-    /// Provider ids plus any model cells currently on screen.
+    /// Provider ids plus any model cells currently on screen, plus remote extras
+    /// even while a row is switched off so Settings can turn it back on.
     var knownIDs: [String] {
-        Array(Set(providers.map(\.id) + snapshots.map(\.id) + localModelSummaries.map(\.id)))
+        Array(Set(providers.map(\.id) + snapshots.map(\.id) + localModelSummaries.map(\.id) + knownRemoteIDs()))
     }
     /// Provider IDs block fetching before credential access. Model IDs only hide
     /// their cells so disabling one model does not stop the shared runtime.
@@ -42,17 +44,20 @@ final class UsageStore: ObservableObject {
         didSet {
             guard disconnected != oldValue else { return }
             for id in disconnected.subtracting(oldValue) { cancelRefresh(providerID: id) }
-            snapshots.removeAll { disconnected.contains($0.id) }
+            snapshots.removeAll { hides($0.id) }
             refusedAccess.subtract(disconnected)
             // The remembered reading has to go as well. Dropping it from
             // `snapshots` alone left it in `lastGood`, which is written to the
             // archive wholesale on every fetch — so a switched-off provider was
             // remembered forever and rebuilt from the archive at the next
             // launch, ring and all.
-            for id in disconnected { lastGood.removeValue(forKey: id) }
+            for id in Array(lastGood.keys) where hides(id) { lastGood.removeValue(forKey: id) }
             archive.save(lastGood)
-            for provider in providers where oldValue.contains(provider.id) && !disconnected.contains(provider.id) {
+            for provider in providers where oldValue.contains(provider.id) && !hides(provider.id) {
                 publish(Self.placeholder(provider))
+                for id in extraRemoteIDs() where id.hasPrefix(provider.id + ":") {
+                    if let extra = makeExtraSnapshot(id: id) { publish(extra) }
+                }
             }
             let changed = disconnected.symmetricDifference(oldValue)
             if providers.contains(where: { changed.contains($0.id) && $0.kind == .usage }) {
@@ -154,11 +159,13 @@ final class UsageStore: ObservableObject {
         refreshDeadline: TimeInterval = 60,
         archive: UsageArchive = UsageArchive(),
         disconnected: Set<String> = [],
+        remoteConnections: [RemoteUsageConnection] = [],
         order: [String] = [],
         pollingNow: @escaping () -> Date = Date.init
     ) {
         self.pollingNow = pollingNow
         self.providers = providers
+        self.remoteConnections = remoteConnections
         self.refreshInterval = refreshInterval
         self.localRefreshInterval = localRefreshInterval
         self.idleRefreshInterval = idleRefreshInterval
@@ -184,29 +191,35 @@ final class UsageStore: ObservableObject {
         // preference binding delivers a moment later is usually identical to
         // the one passed in here. A provider switched off in a previous session
         // would then keep its archived reading indefinitely.
-        if lastGood.keys.contains(where: disconnected.contains) {
-            for id in disconnected { lastGood.removeValue(forKey: id) }
+        if lastGood.keys.contains(where: { hides($0) }) {
+            for id in Array(lastGood.keys) where hides(id) { lastGood.removeValue(forKey: id) }
             archive.save(lastGood)
         }
         // Filtered here, not only in `didSet`. The store is built before the
         // preference reaches it, so an unfiltered first pass draws every
         // switched-off provider for as long as it takes the binding to arrive.
-        snapshots = orderedProviders.filter { !disconnected.contains($0.id) }.compactMap { provider in
-            if !provider.isVisibleWhenAbsent && provider.account() == nil {
-                return nil
+        var current: [String: ProviderSnapshot] = [:]
+        for provider in orderedProviders where !hides(provider.id) {
+            if !provider.isVisibleWhenAbsent && provider.account() == nil { continue }
+            if let remembered = lastGood[provider.id] {
+                var snapshot = remembered.snapshot
+                snapshot.status = .stale(since: remembered.fetchedAt)
+                current[provider.id] = snapshot
+            } else {
+                current[provider.id] = Self.placeholder(provider)
             }
-            guard let remembered = lastGood[provider.id] else { return Self.placeholder(provider) }
-            var snapshot = remembered.snapshot
-            snapshot.status = .stale(since: remembered.fetchedAt)
-            return snapshot
         }
+        for id in extraRemoteIDs() where current[id] == nil {
+            if let extra = makeExtraSnapshot(id: id) { current[id] = extra }
+        }
+        snapshots = assembleSnapshots(from: current)
         updateNotchSnapshots()
     }
 
     private func updateNotchSnapshots() {
         let cells = ProviderOrder.cells(from: snapshots, keeping: notchSnapshots)
         notchSnapshots = ProviderOrder.arrange(cells, by: order, id: \.id)
-            .filter { !disconnected.contains($0.id) }
+            .filter { !hides($0.id) }
     }
 
     /// Model discovery does not need to re-read any cloud account's credential.
@@ -233,7 +246,24 @@ final class UsageStore: ObservableObject {
                             needsSignInRenewal: needsRenewal.contains(provider.id))
             return [summary] + models.filter { $0.sourceProviderID == provider.id }
         }
-        return ProviderOrder.arrange(summaries, by: order, id: \.id)
+        return ProviderOrder.arrange(summaries + remoteAccountSummaries, by: order, id: \.id)
+    }
+
+    /// Discovered remote extras, including ones switched off in Settings.
+    var remoteAccountSummaries: [ProviderSummary] {
+        knownRemoteIDs().compactMap { id in
+            guard let assistant = assistant(forRemoteID: id),
+                  let family = ProviderSnapshot.familyDisplayName(for: id),
+                  let machine = ProviderSnapshot.remoteConnectionName(from: id) else { return nil }
+            return ProviderSummary(
+                kind: .usage,
+                id: id,
+                name: "\(family) · \(machine)",
+                glyph: assistant.glyph,
+                account: nil,
+                signIn: .guidance(L10n.t("Remote \(family)."))
+            )
+        }
     }
 
     func start() {
@@ -415,7 +445,7 @@ final class UsageStore: ObservableObject {
     func refresh() async {
         // The provider tasks below do not inherit this task's cancellation.
         guard !Task.isCancelled else { return }
-        let tasks = orderedProviders.filter { !disconnected.contains($0.id) }.map {
+        let tasks = orderedProviders.filter { !hides($0.id) }.map {
             beginRefresh($0)
         }
         for task in tasks { await task.value }
@@ -429,14 +459,14 @@ final class UsageStore: ObservableObject {
     @discardableResult
     func refresh(providerID: String) -> Task<Void, Never>? {
         guard let provider = providers.first(where: { $0.id == providerID }),
-              !disconnected.contains(providerID) else { return nil }
+              !hides(providerID) else { return nil }
         if let task = fetchTasks[providerID] { return task }
         if provider.kind == .usage { lastAttempt = pollingNow() }
         return beginRefresh(provider, holdIndicator: true)
     }
 
     func refreshLocalRuntimes() {
-        for provider in providers where provider.kind == .localRuntime && !disconnected.contains(provider.id) {
+        for provider in providers where provider.kind == .localRuntime && !hides(provider.id) {
             _ = beginRefresh(provider)
         }
     }
@@ -458,7 +488,7 @@ final class UsageStore: ObservableObject {
     private func restart(_ provider: UsageProvider, applying change: () -> Void) {
         cancelRefresh(providerID: provider.id)
         change()
-        guard !disconnected.contains(provider.id) else { return }
+        guard !hides(provider.id) else { return }
         publish(Self.placeholder(provider))
         _ = beginRefresh(provider)
     }
@@ -490,10 +520,10 @@ final class UsageStore: ObservableObject {
     }
 
     private func publish(_ snapshot: ProviderSnapshot) {
-        guard !disconnected.contains(snapshot.id) else { return }
+        guard !hides(snapshot.id) else { return }
         var current = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.id, $0) })
         current[snapshot.id] = snapshot
-        snapshots = orderedProviders.compactMap { disconnected.contains($0.id) ? nil : current[$0.id] }
+        snapshots = assembleSnapshots(from: current)
     }
 
     /// Sign out of one provider: discard anything of its account that this app
@@ -546,6 +576,36 @@ final class UsageStore: ObservableObject {
     func providerAuthenticationChanged(providerID: String) {
         providerAccountRevision &+= 1
         refresh(providerID: providerID)
+    }
+
+    /// Publish extra remote rings from Herdr/SSH. Failures keep the last good
+    /// reading; connections without a reading yet draw an empty ring.
+    func applyRemoteReadings(connections: [RemoteUsageConnection],
+                             successes: [RemoteUsageReading] = []) {
+        remoteConnections = connections
+        for reading in successes {
+            guard !hides(reading.connection.id),
+                  let assistant = assistant(forRemoteID: reading.connection.id) else { continue }
+            let snapshot = ProviderSnapshot(
+                id: reading.connection.id,
+                displayName: familyDisplayName(forRemoteID: reading.connection.id),
+                glyph: assistant.glyph,
+                fidelity: .official,
+                status: .ok,
+                windows: reading.windows,
+                kind: .usage,
+                sourceProviderID: assistant.id,
+                plan: reading.plan
+            )
+            lastGood[reading.connection.id] = (snapshot, reading.fetchedAt)
+            publish(snapshot)
+        }
+        if !successes.isEmpty { archive.save(lastGood) }
+        var current = Dictionary(uniqueKeysWithValues: snapshots.map { ($0.id, $0) })
+        for id in extraRemoteIDs() where current[id] == nil {
+            if let extra = makeExtraSnapshot(id: id) { current[id] = extra }
+        }
+        snapshots = assembleSnapshots(from: current)
     }
 
     /// Say that a provider's saved login needs renewing by hand.
@@ -649,7 +709,7 @@ final class UsageStore: ObservableObject {
     }
 
     private func acceptsResult(from provider: UsageProvider, generation: Int) -> Bool {
-        !Task.isCancelled && !disconnected.contains(provider.id)
+        !Task.isCancelled && !hides(provider.id)
             && generations[provider.id, default: 0] == generation
     }
 
@@ -766,6 +826,77 @@ final class UsageStore: ObservableObject {
         default:
             return .error((error as NSError).localizedDescription)
         }
+    }
+
+    /// Settings toggles the assistant id. Extra remote cells share that switch
+    /// without being listed as providers of their own.
+    private func hides(_ id: String) -> Bool {
+        ProviderSnapshot.hidesCell(id, disconnected: disconnected, knownIDs: providers.map(\.id))
+    }
+
+    private func isRemoteExtraID(_ id: String) -> Bool {
+        assistant(forRemoteID: id) != nil
+    }
+
+    private func assistant(forRemoteID id: String) -> UsageProvider? {
+        guard let family = ProviderSnapshot.remoteFamilyPrefix(id) else { return nil }
+        let familyProviders = providers.filter {
+            $0.kind == .usage && ProviderSnapshot.belongsToFamily($0.id, family: family)
+        }
+        return familyProviders.first { !disconnected.contains($0.id) } ?? familyProviders.first
+    }
+
+    private func extraRemoteIDs() -> [String] {
+        knownRemoteIDs().filter { !hides($0) }
+    }
+
+    private func knownRemoteIDs() -> [String] {
+        var ids = remoteConnections.map(\.id)
+        for key in lastGood.keys where isRemoteExtraID(key) && !ids.contains(key) {
+            ids.append(key)
+        }
+        return ids
+    }
+
+    private func familyDisplayName(forRemoteID id: String) -> String {
+        ProviderSnapshot.familyDisplayName(for: id) ?? assistant(forRemoteID: id)?.displayName ?? id
+    }
+
+    private func assembleSnapshots(from current: [String: ProviderSnapshot]) -> [ProviderSnapshot] {
+        let providerCells = orderedProviders.compactMap { hides($0.id) ? nil : current[$0.id] }
+        let taken = Set(providerCells.map(\.id))
+        let extras = extraRemoteIDs().compactMap { id -> ProviderSnapshot? in
+            guard !taken.contains(id), !hides(id) else { return nil }
+            return current[id] ?? makeExtraSnapshot(id: id)
+        }
+        return providerCells + extras
+    }
+
+    private func makeExtraSnapshot(id: String) -> ProviderSnapshot? {
+        guard let assistant = assistant(forRemoteID: id) else { return nil }
+        if let remembered = lastGood[id] {
+            return ProviderSnapshot(
+                id: id,
+                displayName: familyDisplayName(forRemoteID: id),
+                glyph: assistant.glyph,
+                fidelity: remembered.snapshot.fidelity,
+                status: .stale(since: remembered.fetchedAt),
+                windows: remembered.snapshot.windows,
+                kind: .usage,
+                sourceProviderID: assistant.id,
+                plan: remembered.snapshot.plan
+            )
+        }
+        return ProviderSnapshot(
+            id: id,
+            displayName: familyDisplayName(forRemoteID: id),
+            glyph: assistant.glyph,
+            fidelity: .official,
+            status: .stale(since: .distantPast),
+            windows: [],
+            kind: .usage,
+            sourceProviderID: assistant.id
+        )
     }
 
     private static func placeholder(_ provider: UsageProvider) -> ProviderSnapshot {

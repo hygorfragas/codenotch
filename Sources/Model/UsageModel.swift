@@ -232,6 +232,22 @@ struct UsageBlock: Equatable {
     }
 }
 
+/// Extra reading of an already-enabled assistant. Settings still toggle the
+/// assistant id; the connection name only identifies the extra cell.
+struct RemoteUsageConnection: Equatable, Sendable, Hashable {
+    let assistantID: String
+    let connectionName: String
+    var id: String { "\(assistantID):\(connectionName)" }
+}
+
+/// One successful remote `/usage` reading, ready for `UsageStore` to publish.
+struct RemoteUsageReading: Equatable, Sendable {
+    let connection: RemoteUsageConnection
+    let windows: [LimitWindow]
+    let plan: String?
+    let fetchedAt: Date
+}
+
 struct ProviderSnapshot: Identifiable, Equatable {
     let id: String
     let displayName: String
@@ -374,6 +390,86 @@ struct ProviderSnapshot: Identifiable, Equatable {
         if let usedText = headline?.usedText { return usedText }
         if let used = headline?.used { return LimitWindow.compact(used) }
         return "—"
+    }
+
+    /// An extra reading of an already-enabled assistant, not a Settings row
+    /// and not a local model cell. The ring uses the assistant glyph; the
+    /// connection name stays off the cell.
+    var isRemoteExtraReading: Bool {
+        kind == .usage && localModel == nil
+            && sourceProviderID != nil && sourceProviderID != id
+    }
+
+    /// Connection label for tooltip and phone detail. Nil on the local ring.
+    var remoteConnectionName: String? {
+        Self.remoteConnectionName(from: id)
+    }
+
+    /// Hover title for a usage cell. Remote extras keep the family name so a
+    /// a local profile slug never leaks onto every Claude ring.
+    var usageCardTitle: String {
+        if let family = Self.familyDisplayName(for: id), isRemoteExtraReading {
+            return L10n.t("\(family) Usage")
+        }
+        return L10n.t("\(displayName) Usage")
+    }
+
+    /// Settings toggles the assistant family. Extra remote cells share that
+    /// switch: `claude:Lab` follows every Claude profile, not only the
+    /// default `claude` row. A row can also hide one extra by its own id.
+    static func hidesCell(_ id: String, disconnected: Set<String>,
+                          knownIDs: [String] = []) -> Bool {
+        if disconnected.contains(id) { return true }
+        if id.contains(":model:") {
+            return disconnected.contains { assistant in
+                id.hasPrefix(assistant + ":")
+            }
+        }
+        if let family = remoteFamilyPrefix(id) {
+            let members = knownIDs.filter { belongsToFamily($0, family: family) }
+            let watch = members.isEmpty ? [family] : members
+            return watch.allSatisfy { disconnected.contains($0) }
+        }
+        return false
+    }
+
+    static func familyDisplayName(for id: String) -> String? {
+        switch remoteFamilyPrefix(id) {
+        case ClaudeProfile.defaultID: return "Claude"
+        case CodexProfile.defaultID: return "Codex"
+        case "cursor": return "Cursor"
+        default: return nil
+        }
+    }
+
+    static func remoteConnectionName(from id: String) -> String? {
+        guard let family = remoteFamilyPrefix(id) else { return nil }
+        let name = String(id.dropFirst(family.count + 1))
+        return name.isEmpty ? nil : name
+    }
+
+    static func remoteFamilyPrefix(_ id: String) -> String? {
+        guard !id.contains(":model:") else { return nil }
+        let parts = id.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, !parts[1].isEmpty else { return nil }
+        let family = String(parts[0])
+        switch family {
+        case ClaudeProfile.defaultID, CodexProfile.defaultID, "cursor":
+            return family
+        default:
+            return nil
+        }
+    }
+
+    static func belongsToFamily(_ providerID: String, family: String) -> Bool {
+        switch family {
+        case ClaudeProfile.defaultID:
+            return ClaudeProfile.isClaude(providerID: providerID)
+        case CodexProfile.defaultID:
+            return CodexProfile.isCodex(providerID: providerID)
+        default:
+            return providerID == family
+        }
     }
 
     /// An empty local inventory still confirms server connectivity; an absent

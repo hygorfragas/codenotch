@@ -9,3 +9,16 @@ xcuserdata/
 .swiftpm/
 .agents/
 .forgeguard/
+.cursor/
+.optmem/
+.specsfy/
+docs/
+specs/
+specs.md
+AGENTS.md
+CLAUDE.md
+PROJECT.md
+INTERFACE.md
+DESIGNSYSTEM.MD
+skills-lock.json
+

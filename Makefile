@@ -45,9 +45,15 @@ DEV_TEAM := $(if $(DEV_IDENTITY),$(shell security find-certificate -c "$(DEV_IDE
 	| openssl x509 -noout -subject -nameopt sep_multiline 2>/dev/null \
 	| sed -n 's/^ *OU=\([A-Z0-9]*\)$$/\1/p' | head -1))
 
+# Ad-hoc binaries have no Team ID. Hardened Runtime then refuses the
+# embedded Sparkle framework ("mapping process and mapped file have
+# different Team IDs") and the app dies at launch. Real identities share
+# a Team ID with the re-signed Sparkle copy, so they keep the runtime.
+ADHOC_RUNTIME :=
 ifeq (,$(HAS_DEVELOPER_ID))
 ifeq (,$(DEV_TEAM))
 DEV_SIGN := CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM="" CODE_SIGN_STYLE=Automatic
+ADHOC_RUNTIME := ENABLE_HARDENED_RUNTIME=NO
 else
 DEV_SIGN := CODE_SIGN_IDENTITY="Apple Development" CODE_SIGN_STYLE=Manual \
 	DEVELOPMENT_TEAM="$(DEV_TEAM)" PROVISIONING_PROFILE_SPECIFIER=""
@@ -100,10 +106,11 @@ run: build
 # right-click → Open on the first launch when the build is not Developer ID
 # signed. The app embeds Sparkle, and macOS rejects a bundle whose framework
 # and binary carry different Team IDs, so the whole bundle is signed with one
-# identity rather than left unsigned.
+# identity rather than left unsigned. Ad-hoc `make install` also drops
+# Hardened Runtime (`ADHOC_RUNTIME`) for the same reason.
 install: gen
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -destination '$(DEST)' \
-		-configuration Release $(DEV_SIGN) build
+		-configuration Release $(DEV_SIGN) $(ADHOC_RUNTIME) build
 	@APP=$$(xcodebuild -project $(PROJECT) -scheme $(SCHEME) -destination '$(DEST)' \
 		-configuration Release -showBuildSettings 2>/dev/null \
 		| awk -F' = ' '/ BUILT_PRODUCTS_DIR/ {print $$2; exit}')/Codenotch.app; \

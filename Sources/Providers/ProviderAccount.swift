@@ -128,8 +128,12 @@ struct ProviderSummary: Identifiable, Equatable {
     /// and never raise the dialogue, so offering to restore access there would
     /// point at a prompt that cannot appear.
     var usesKeychain: Bool {
-        ClaudeProfile.isClaude(providerID: id) || id == AntigravityProfile.defaultID || id == "cursor"
+        if isRemoteExtra { return false }
+        return ClaudeProfile.isClaude(providerID: id) || id == AntigravityProfile.defaultID || id == "cursor"
     }
+
+    /// Extra remote reading (`claude:Office`). Not a local profile slug.
+    var isRemoteExtra: Bool { ProviderSnapshot.remoteFamilyPrefix(id) != nil }
 
     let id: String
     let name: String
