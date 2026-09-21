@@ -573,8 +573,8 @@ private struct ProviderTooltip: View {
         VStack(alignment: .leading, spacing: 0) {
             TooltipHeader(title: snapshot.kind == .localRuntime
                           ? L10n.t("\(snapshot.localModel?.brand?.displayName ?? snapshot.displayName) · Local")
-                          : L10n.t("\(snapshot.displayName) Usage"),
-                          subtitle: snapshot.plan,
+                          : snapshot.usageCardTitle,
+                          subtitle: snapshot.remoteConnectionName ?? snapshot.plan,
                           note: activityNote ?? (snapshot.localModel?.brand != nil ? snapshot.displayName : readingAge)) {
                 ProviderGlyphView(glyph: snapshot.glyph)
                     .foregroundStyle(Palette.textPrimary)

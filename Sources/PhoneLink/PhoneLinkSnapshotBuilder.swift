@@ -37,7 +37,8 @@ struct PhoneLinkSnapshotBuilder {
         }
         
         for snap in orderedSnaps {
-            if disconnected.contains(snap.providerID) { continue }
+            if ProviderSnapshot.hidesCell(snap.id, disconnected: disconnected,
+                                          knownIDs: snapshots.map(\.providerID) + Array(disconnected)) { continue }
             if snap.kind == .localRuntime { continue }
             
             var kindStr = "ok"
@@ -80,7 +81,7 @@ struct PhoneLinkSnapshotBuilder {
             
             let p = PhoneLinkSnapshot.Provider(
                 id: snap.id,
-                displayName: snap.displayName,
+                displayName: snap.remoteConnectionName ?? snap.displayName,
                 fidelity: String(describing: snap.fidelity),
                 status: status,
                 windows: windows,

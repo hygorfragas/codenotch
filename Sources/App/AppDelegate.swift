@@ -28,6 +28,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Turns the monitors' running commentary into the one event worth
     /// interrupting for: an agent that has just stopped working.
     private var completions = SessionCompletionWatcher()
+    /// Polls Herdr machines over SSH while the Settings option is on.
+    private var remoteUsageProbeTask: Task<Void, Never>?
 
     /// The unit bundle is hosted by this app, so `xcodebuild test` launches it
     /// for real. Without this guard every test run put a live request on the
@@ -673,6 +675,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             self.store = store
+            Task { @MainActor [weak self] in
+                self?.startRemoteUsageProbe(store: store, preferences: preferences)
+            }
         }
 
         // What each agent is doing right now, so the notch can say whether it is
@@ -931,6 +936,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fleet.showResetAlert(demo, duration: 6.0)
     }
 
+    @MainActor
+    private func startRemoteUsageProbe(store: UsageStore, preferences: Preferences) {
+        guard !isRunningTests else { return }
+        preferences.$herdrEnabled
+            .receive(on: RunLoop.main)
+            .sink { [weak self, weak store] enabled in
+                self?.remoteUsageProbeTask?.cancel()
+                guard enabled, let store else { return }
+                self?.remoteUsageProbeTask = Task.detached { [weak store] in
+                    let probe = HerdrRemoteUsageProbe()
+                    while !Task.isCancelled {
+                        let agents = probe.liveAgents()
+                        let connections = probe.connections(from: agents)
+                        let summary = connections.map(\.id).joined(separator: ",")
+                        Log.usage.error("herdr live connections: \(summary, privacy: .public)")
+                        NSLog("codenotch herdr live connections: %@", summary)
+                        await MainActor.run {
+                            store?.applyRemoteReadings(connections: connections)
+                        }
+                        let readings = await probe.readEnabled(from: agents)
+                        guard !Task.isCancelled else { return }
+                        await MainActor.run {
+                            store?.applyRemoteReadings(connections: connections, successes: readings)
+                        }
+                        try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    }
+                }
+            }
+            .store(in: &cancellables)
+    }
+
     /// Closing the settings window must not take the app with it.
     ///
     /// The default for a Dock app is to quit once its last window closes, which
@@ -963,6 +999,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ollamaRelay?.configure(enabled: false, endpoint: OllamaEndpoint.defaultAddress)
         lmstudioMetrics?.stop()
         tokenRefresher?.stop()
+        remoteUsageProbeTask?.cancel()
         store?.stop()
         activityCoordinator?.stop()
         notchFleet?.stop()

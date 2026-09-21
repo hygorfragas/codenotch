@@ -508,10 +508,13 @@ struct SettingsView: View {
                 // The sheet stays open while models load and unload. Update
                 // those rows without re-reading cloud credentials on each poll.
                 guard let usageStore else { return }
+                let remotes = usageStore.remoteAccountSummaries
+                let remoteIDs = Set(remotes.map(\.id))
                 let models = usageStore.localModelSummaries
-                let updated = accounts.filter { $0.localModel == nil }.flatMap { account in
+                let kept = accounts.filter { $0.localModel == nil && !remoteIDs.contains($0.id) }
+                let updated = kept.flatMap { account in
                     [account] + models.filter { $0.sourceProviderID == account.id }
-                }
+                } + remotes
                 accounts = ProviderOrder.arrange(updated, by: preferences.providerOrder, id: \.id)
             }
         .onReceive((usageStore?.$providerAccountRevision.eraseToAnyPublisher()
@@ -747,6 +750,15 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Section {
+                Toggle(isOn: $preferences.herdrEnabled) {
+                    Text(L10n.t("Herdr"))
+                    Text(L10n.t("Optional. Remote sessions appear as rows above when Herdr sees them. Switching Herdr off does not hide a session that is already on."))
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -1358,7 +1370,7 @@ struct SettingsView: View {
     /// state, and it is the only moment the sheet has something to explain.
     private var needsSetup: Bool {
         guard !connected.contains(where: { $0.localModel != nil }) else { return false }
-        let usageAccounts = accounts.filter { $0.kind == .usage }
+        let usageAccounts = accounts.filter { $0.kind == .usage && !$0.isRemoteExtra }
         return !usageAccounts.isEmpty && usageAccounts.allSatisfy { $0.account == nil }
     }
 
@@ -1630,6 +1642,14 @@ private struct AccountRow: View {
     private var isConnected: Bool { preferences.isConnected(provider.id) }
     private var isMuted: Bool { preferences.isMutedAlerts(for: provider.id) }
 
+    private var remoteCaption: String {
+        let family = ProviderSnapshot.familyDisplayName(for: provider.id) ?? provider.name
+        if preferences.herdrEnabled {
+            return L10n.t("Remote \(family) via Herdr.")
+        }
+        return L10n.t("Remote \(family). Herdr is off; this session stays until you hide the row.")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Centred, not baseline-aligned. A glyph is a `Shape` and has no
@@ -1676,9 +1696,11 @@ private struct AccountRow: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
                 }
-                .help(isOrderable
-                      ? L10n.t("Drag to reorder. The notch draws the rings in this order.")
-                      : L10n.t("Switch this on to give it a ring in the notch."))
+                .help(provider.isRemoteExtra
+                      ? remoteCaption
+                      : (isOrderable
+                         ? L10n.t("Drag to reorder. The notch draws the rings in this order.")
+                         : L10n.t("Switch this on to give it a ring in the notch.")))
                 // Two mechanisms, neither of which covers both halves.
                 // `pointerStyle` draws the hand on an ordinary hover but cannot
                 // re-evaluate under a pointer that has not moved, which is the
@@ -1701,7 +1723,7 @@ private struct AccountRow: View {
                 // Per-provider threshold alerts, muted here rather than in a
                 // separate notifications pane — the thing being muted is this
                 // row's reading, so the control belongs on the row.
-                if isConnected, provider.kind == .usage {
+                if isConnected, provider.kind == .usage, !provider.isRemoteExtra {
                     Button {
                         preferences.setAlertsMuted(!isMuted, for: provider.id)
                     } label: {
@@ -1751,11 +1773,15 @@ private struct AccountRow: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                     .labelsHidden()
-                    .help(provider.localModel != nil
+                    .help(provider.isRemoteExtra
+                          ? (isConnected
+                             ? L10n.t("Hide this remote ring on the notch.")
+                             : L10n.t("Show this remote ring on the notch."))
+                          : (provider.localModel != nil
                           ? L10n.t("Show or hide this model in the notch. It stays loaded in \(provider.runtimeName ?? "Ollama").")
                           : isConnected
                           ? L10n.t("Switch off to stop reading \(provider.name) and forget its readings. \(provider.signIn.signOutCaveat)")
-                          : L10n.t("Switch on to sign in and read \(provider.name) again."))
+                          : L10n.t("Switch on to sign in and read \(provider.name) again.")))
             }
 
             // 48 = the handle, the glyph and the two gaps before the name, so
@@ -2041,6 +2067,9 @@ private struct AccountRow: View {
             Text(isConnected ? L10n.t("\(model.memoryText) \(model.memoryLabel) · via \(provider.runtimeName ?? "Ollama")")
                  : L10n.t("Hidden from the notch · Loaded in \(provider.runtimeName ?? "Ollama")"))
                 .foregroundStyle(.secondary)
+        } else if provider.isRemoteExtra {
+            Text(isConnected ? remoteCaption : L10n.t("Hidden from the notch."))
+                .foregroundStyle(isConnected ? .secondary : .tertiary)
         } else if !isConnected {
             Text(L10n.t("Signed out — nothing is read, and no readings are kept."))
                 .foregroundStyle(.tertiary)
@@ -2107,6 +2136,7 @@ private struct AccountRow: View {
 
     /// The owning app when it is installed, the vendor's page otherwise.
     private var destination: Destination? {
+        if provider.isRemoteExtra { return nil }
         if case .openApp(let bundleID, let name) = provider.signIn,
            let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
             return .app(app, name: name)
@@ -2159,9 +2189,9 @@ private struct AccountRow: View {
                     didConnect()
                     // Nothing to open for Claude Code — but then there is no
                     // account either, so `detail` is already showing what to do.
-                    if provider.localModel == nil { _ = signIn(provider.id) }
+                    if provider.localModel == nil, !provider.isRemoteExtra { _ = signIn(provider.id) }
                 } else {
-                    if provider.localModel == nil { signOut(provider.id) }
+                    if provider.localModel == nil, !provider.isRemoteExtra { signOut(provider.id) }
                     preferences.setConnected(false, for: provider.id)
                 }
             }

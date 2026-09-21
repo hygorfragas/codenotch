@@ -113,12 +113,14 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var refreshingCells: Set<String> = []
 
     func isRefreshing(_ snapshot: ProviderSnapshot) -> Bool {
-        snapshot.localModel == nil
+        if snapshot.isRemoteExtraReading { return false }
+        return snapshot.localModel == nil
             ? refreshing.contains(snapshot.providerID)
             : refreshingCells.contains(snapshot.id)
     }
 
     func refresh(_ snapshot: ProviderSnapshot, using refreshProvider: (String) async -> Void) async {
+        guard !snapshot.isRemoteExtraReading else { return }
         guard snapshot.localModel != nil else {
             await refreshProvider(snapshot.providerID)
             return
@@ -515,6 +517,10 @@ final class NotchViewModel: ObservableObject {
     /// A provider with no activity source gets none, rather than borrowing
     /// somebody else's.
     func activity(for snapshot: ProviderSnapshot) -> ActivitySummary? {
+        // Extra remote rings are a quota reading. They must not borrow the
+        // assistant's local sessions, which would look like working/waiting
+        // on a machine that is not this one.
+        if snapshot.isRemoteExtraReading { return nil }
         guard let model = snapshot.localModel else { return activity(for: snapshot.providerID) }
         if let local = localActivities[snapshot.id] {
             return ActivitySummary(sessions: [AgentSession(id: snapshot.id, name: local.label,
