@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "skills": {
+    "specsfy-01-inbox": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "8ab4e420442b2d73580211c873eb00c3ca9d1bb4c67054c251970f7364f5adc8"
+    },
+    "specsfy-02-backlog": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "fee2d9aaf1a2c581031c89eca17b7c82a88fce0dfd279b36e1262a626ba13884"
+    },
+    "specsfy-03-specify": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "64b416da2adf128af6c4dae1c060203eea3d955b2e6faa2c77c2e82676db977e"
+    },
+    "specsfy-04-validate": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "a7ba15bcf325995c07268fb1a4e44a2e8c50326453ba8973139d7d293d9fe90b"
+    },
+    "specsfy-05-tasks": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "ddc416c7d7a5dec436aca823d339469b40586b5a734f76205f47b3217c7cca79"
+    },
+    "specsfy-06-tdd-bdd": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "117f34fb3b2e1011b29089a71fa887ae816404538db54b57083d1d3e2d9b891f"
+    },
+    "specsfy-07-implement": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "f0b37b3716de425b5e004070540763e4dfe1701d3083fecad76afc9637854f0a"
+    },
+    "specsfy-aux-database": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "17059a4288008dae98adb2d1e21177e56a770b10f5183fdee871a48546b61897"
+    },
+    "specsfy-aux-rules": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "1709605534681af36c3057fea9c21c9d6f9968460ed452526a331035190d5c3e"
+    },
+    "specsfy-aux-stack": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "ce33120705e1b4ff7d197feddb2770c27453eddba09e4ebfe32ac03e5bd6e716"
+    },
+    "specsfy-data-discovery": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "6519b7fee099658fd73adaf28db363769f808c29f08cfae8ff4df3add7d2009f"
+    },
+    "specsfy-documentator": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "ce211c9ed303676adab7c234def3c704d1ba2652516e474c8e378f5407529035"
+    },
+    "specsfy-interviewer": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "c915e43b62afc1a12abbd3c2cde8d5639f62ee51a362ab24907a5dfb6a0a0e4e"
+    },
+    "specsfy-milestone-governor": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "139ebd7f1e680de9a1cf1d02d8dd4752c8b19ae774edf147a16cef1defb9ebbf"
+    },
+    "specsfy-mvp-milestone-interviewer": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "cf67334eeaeba5b589f845549d5b277b30341535afeb91a93fd93b29146da089"
+    },
+    "specsfy-progress": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "d1cb713874a821491936fc7e0b11ade20e84b1dc0fb0419e97004f10e9a18bed"
+    },
+    "specsfy-roadmap-milestone-interviewer": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "aa0cb76a46c3c7c887163641d4be51f4c0d51694df73ca65fff91e7770a793ce"
+    },
+    "specsfy-setup": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "077a4b1473d444a542effad0f3faa2f706e466a7cfc277e496244c0252943194"
+    },
+    "specsfy-update-spec": {
+      "source": "../tmp/specsfy-install-4wDJOy/checkout/skills",
+      "sourceType": "local",
+      "computedHash": "5aa93c5be8b2449669a3e9a88268819ed30173af55ee6016626f652932a5e9ba"
+    }
+  }
+}
