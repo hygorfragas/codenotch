@@ -9,26 +9,10 @@ Relação: relaciona cada arquivo observado à sua superfície.
 
 | Categoria | Arquivo | Símbolos |
 | --- | --- | --- |
-| Páginas | snitch/app/Enums/EpisodeType.php | EpisodeType |
-| Páginas | snitch/app/Enums/UserRole.php | UserRole |
-| Páginas | snitch/app/Enums/ZoneType.php | ZoneType |
 | Páginas | snitch/app/Http/Controllers/Controller.php | Controller |
-| Páginas | snitch/app/Models/Alert.php | Alert, casts, episode |
-| Páginas | snitch/app/Models/Camera.php | Camera, location, zones, trackerLinks, episodes, credential |
-| Páginas | snitch/app/Models/Company.php | Company, locations, employees, episodes, users |
-| Páginas | snitch/app/Models/Employee.php | Employee, company, episodes, trackerLinks |
-| Páginas | snitch/app/Models/Episode.php | Episode, casts, company, location, employee, camera, zone, alerts |
-| Páginas | snitch/app/Models/Location.php | Location, company, cameras, episodes, ppeRequirements, smartphoneSetting, alertChannels, managers |
-| Páginas | snitch/app/Models/LocationAlertChannel.php | LocationAlertChannel, casts, location |
-| Páginas | snitch/app/Models/LocationPpeRequirement.php | LocationPpeRequirement, casts, location |
-| Páginas | snitch/app/Models/LocationSmartphoneSetting.php | LocationSmartphoneSetting, casts, location |
-| Páginas | snitch/app/Models/TrackerLink.php | TrackerLink, casts, camera, employee |
-| Páginas | snitch/app/Models/User.php | User, casts, company, location |
-| Páginas | snitch/app/Models/Zone.php | Zone, casts, camera, episodes |
+| Páginas | snitch/app/Models/User.php | User, casts |
 | Páginas | snitch/app/Providers/AppServiceProvider.php | AppServiceProvider, register, boot |
 | Outras fontes | snitch/bootstrap/app.php | — |
-| Outras fontes | snitch/bootstrap/cache/packages.php | — |
-| Outras fontes | snitch/bootstrap/cache/services.php | — |
 | Outras fontes | snitch/bootstrap/providers.php | — |
 | Outras fontes | snitch/config/app.php | — |
 | Outras fontes | snitch/config/auth.php | — |
@@ -40,16 +24,10 @@ Relação: relaciona cada arquivo observado à sua superfície.
 | Outras fontes | snitch/config/queue.php | — |
 | Outras fontes | snitch/config/services.php | — |
 | Outras fontes | snitch/config/session.php | — |
-| Outras fontes | snitch/database/factories/CameraFactory.php | CameraFactory, definition |
-| Outras fontes | snitch/database/factories/CompanyFactory.php | CompanyFactory, definition |
-| Outras fontes | snitch/database/factories/EmployeeFactory.php | EmployeeFactory, definition |
-| Outras fontes | snitch/database/factories/EpisodeFactory.php | EpisodeFactory, definition |
-| Outras fontes | snitch/database/factories/LocationFactory.php | LocationFactory, definition |
 | Outras fontes | snitch/database/factories/UserFactory.php | UserFactory, definition, unverified |
 | Outras fontes | snitch/database/migrations/0001_01_01_000000_create_users_table.php | extends, up, down |
 | Outras fontes | snitch/database/migrations/0001_01_01_000001_create_cache_table.php | extends, up, down |
 | Outras fontes | snitch/database/migrations/0001_01_01_000002_create_jobs_table.php | extends, up, down |
-| Outras fontes | snitch/database/migrations/2026_10_28_000001_create_snitch_tables.php | extends, up, down |
 | Outras fontes | snitch/database/seeders/DatabaseSeeder.php | DatabaseSeeder, run |
 | Outras fontes | snitch/public/index.php | — |
 | Outras fontes | snitch/resources/css/app.css | — |
