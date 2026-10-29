@@ -604,7 +604,7 @@ tests/
 
 | IDs | BDD de referência | Teste TDD informado pelo BDD | RED observado | GREEN observado | Refactor/regressão |
 | --- | --- | --- | --- | --- | --- |
-| US-001, FR-001, AC-001 | AC-001 na seção 6 | snitch/tests/Feature/Snitch/Ac001Test.php com SPECSFY: US-001 FR-001 AC-001 | RED: 404 em vez de 201. php artisan test --env=testing --filter=Ac001 | Pending | Pending |
+| US-001, FR-001, AC-001 | AC-001 na seção 6 | snitch/tests/Feature/Snitch/Ac001Test.php com SPECSFY: US-001 FR-001 AC-001 | RED: 404 em vez de 201. php artisan test --env=testing --filter=Ac001 | GREEN: 201 com photo e recorded_at (T024) | Nenhuma |
 | US-001, FR-001, NFR-001, AC-002 | [AC-002 na seção 6] | [caso 2 em tests/Feature/RecursoTest.php com marcador próprio `SPECSFY:`] | Pending | Pending | Pending |
 | US-001, FR-001, NFR-001, AC-003 | [AC-003 na seção 6] | [caso 3 em tests/Feature/RecursoTest.php com marcador próprio `SPECSFY:`] | Pending | Pending | Pending |
 
@@ -857,13 +857,14 @@ tests/
   - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
 
 
-- [ ] T024 [CODE] [US-001] Gravar foto, data e hora no registro em app/Services/EpisodeRecorder.php — Refs: US-001, FR-001, FR-005, AC-001, AC-005 — Depends: T022, T001, T005, T014
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac001 tests/Feature/Snitch/Ac001Test.php.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa grava registro sem tela.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T024 [CODE] [US-001] Gravar foto, data e hora no registro em app/Services/EpisodeRecorder.php — Refs: US-001, FR-001, FR-005, AC-001, AC-005 — Depends: T022, T001, T005, T014
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac001 tests/Feature/Snitch/Ac001Test.php.
+  - [x] **VISUAL**: Não aplicável porque a tarefa grava registro sem tela.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: serviços já delegam regras por tipo de episódio.
+  <!-- specsfy:evidence {"task":"T024","refs":["US-001","FR-001","FR-002","FR-003","FR-005","AC-001","AC-002","AC-003","AC-005","AC-006","AC-007","AC-008","AC-014","AC-015"],"commands":["node .agents/skills/specsfy-setup/scripts/check_database_safety.mjs --project /workspace/snitch --command \"php artisan test --env=testing tests/Feature/Snitch/Ac001Test.php\"","php artisan test --env=testing tests/Feature/Snitch/Ac001Test.php tests/Feature/Snitch/Ac002Test.php tests/Feature/Snitch/Ac003Test.php tests/Feature/Snitch/Ac005Test.php tests/Feature/Snitch/Ac006Test.php tests/Feature/Snitch/Ac007Test.php tests/Feature/Snitch/Ac008Test.php tests/Feature/Snitch/Ac014Test.php tests/Feature/Snitch/Ac015Test.php"],"results":["SAFE","9 passed"],"files":["snitch/app/Services/EpisodeRecorder.php","snitch/app/Services/AlertDispatcher.php","snitch/app/Http/Controllers/Snitch/EpisodeController.php","snitch/app/Http/Controllers/Snitch/AlertController.php","snitch/routes/snitch.php","snitch/database/migrations/2026_10_28_000001_create_snitch_tables.php"],"note":"Migration mínima incluída na branch porque T022/PR de migrations ainda não existe; desbloqueia persistência dos testes T024."} -->
 
 
 - [ ] T025 [CODE] [US-002] Enviar a imagem com caixas por SSE em app/Http/Controllers/LiveCameraController.php — Refs: US-002, FR-004, AC-004 — Depends: T023, T004, T012, T013
