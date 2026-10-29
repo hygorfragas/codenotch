@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use App\Enums\EpisodeType;
+use App\Models\Employee;
 use App\Models\Episode;
+use App\Models\Location;
 use Illuminate\Support\Carbon;
 
 class EpisodeRecorder
@@ -21,7 +24,7 @@ class EpisodeRecorder
         $employeeId = $payload['employee_id'] ?? null;
         if ($employeeId === null) {
             return $this->persistEpisode(
-                kind: 'missing_ppe',
+                type: EpisodeType::MissingPpe,
                 employeeId: null,
                 locationId: $payload['location_id'] ?? null,
                 metadata: [
@@ -33,7 +36,7 @@ class EpisodeRecorder
         }
 
         return $this->persistEpisode(
-            kind: 'missing_ppe',
+            type: EpisodeType::MissingPpe,
             employeeId: (int) $employeeId,
             locationId: $payload['location_id'] ?? null,
             metadata: [
@@ -52,12 +55,9 @@ class EpisodeRecorder
         }
 
         $zone = $payload['zone'] ?? 'passagem';
-        if ($zone !== 'passagem') {
-            return null;
-        }
 
         return $this->persistEpisode(
-            kind: 'idle_zone',
+            type: EpisodeType::IdleZone,
             employeeId: isset($payload['employee_id']) ? (int) $payload['employee_id'] : null,
             locationId: $payload['location_id'] ?? null,
             metadata: [
@@ -74,7 +74,7 @@ class EpisodeRecorder
         }
 
         return $this->persistEpisode(
-            kind: 'smartphone',
+            type: EpisodeType::Smartphone,
             employeeId: isset($payload['employee_id']) ? (int) $payload['employee_id'] : null,
             locationId: $payload['location_id'] ?? null,
             metadata: [
@@ -84,21 +84,47 @@ class EpisodeRecorder
     }
 
     private function persistEpisode(
-        string $kind,
+        EpisodeType $type,
         ?int $employeeId,
         ?int $locationId,
         array $metadata,
     ): Episode {
         $recordedAt = Carbon::now();
+        [$companyId, $resolvedLocationId] = $this->resolveCompanyAndLocation($employeeId, $locationId);
 
         return Episode::query()->create([
+            'company_id' => $companyId,
+            'location_id' => $resolvedLocationId,
             'employee_id' => $employeeId,
-            'location_id' => $locationId,
-            'kind' => $kind,
-            'photo' => $this->capturePhotoReference($kind, $metadata),
+            'type' => $type,
+            'photo' => $this->capturePhotoReference($type->value, $metadata),
             'recorded_at' => $recordedAt,
             'metadata' => $metadata,
         ]);
+    }
+
+    /**
+     * @return array{0: int, 1: int}
+     */
+    private function resolveCompanyAndLocation(?int $employeeId, ?int $locationId): array
+    {
+        if ($employeeId !== null) {
+            $employee = Employee::query()->find($employeeId);
+            if ($employee !== null) {
+                $resolvedLocationId = $locationId ?? 1;
+
+                return [$employee->company_id, (int) $resolvedLocationId];
+            }
+        }
+
+        if ($locationId !== null) {
+            $location = Location::query()->find($locationId);
+            if ($location !== null) {
+                return [$location->company_id, $location->id];
+            }
+        }
+
+        return [1, 1];
     }
 
     private function capturePhotoReference(string $kind, array $metadata): string

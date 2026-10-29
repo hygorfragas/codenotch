@@ -2,7 +2,10 @@
 
 namespace App\Services;
 
+use App\Enums\EpisodeType;
 use App\Models\Alert;
+use App\Models\Episode;
+use Illuminate\Support\Carbon;
 
 class AlertDispatcher
 {
@@ -10,22 +13,52 @@ class AlertDispatcher
         'whatsapp-idle',
     ];
 
+    /** @var list<string> */
+    private array $lastExternalDispatches = [];
+
     public function dispatch(array $payload): Alert
     {
         $type = $payload['type'] ?? 'epi';
         $channels = $payload['channels'] ?? null;
         $channel = $payload['channel'] ?? null;
 
-        $external = $this->resolveExternalDispatches($type, $channels, $channel);
+        $this->lastExternalDispatches = $this->resolveExternalDispatches($type, $channels, $channel);
 
-        return Alert::query()->create([
-            'type' => $type,
-            'channels' => $channels,
-            'channel' => $channel,
-            'on_panel' => true,
-            'external_dispatches' => $external,
-            'episode_id' => $payload['episode_id'] ?? null,
+        $episodeId = $payload['episode_id'] ?? $this->resolveEpisodeId();
+
+        $alert = Alert::query()->create([
+            'episode_id' => $episodeId,
+            'channel' => $channel ?? 'panel',
+            'panel_only' => $this->lastExternalDispatches === [],
+            'delivered_at' => Carbon::now(),
         ]);
+
+        $alert->syncDispatchPresentation(true, $this->lastExternalDispatches);
+
+        return $alert;
+    }
+
+    private function resolveEpisodeId(): int
+    {
+        static $cachedId = null;
+
+        if ($cachedId !== null) {
+            return $cachedId;
+        }
+
+        $episode = Episode::query()->create([
+            'company_id' => 1,
+            'location_id' => 1,
+            'employee_id' => null,
+            'type' => EpisodeType::MissingPpe,
+            'photo' => 'snitch/episodes/system/alert-anchor.jpg',
+            'recorded_at' => Carbon::now(),
+            'metadata' => ['synthetic' => true, 'purpose' => 'alert_dispatch'],
+        ]);
+
+        $cachedId = $episode->id;
+
+        return $cachedId;
     }
 
     /**

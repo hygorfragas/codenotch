@@ -3,12 +3,14 @@
 <!-- specsfy:documentator:start -->
 ## Resumo
 
-- Arquivos de teste: 16.
+- Arquivos de teste: 20.
 - Runner: PHPUnit.
 - Scripts: não declarados.
 
 | Arquivo |
 | --- |
+| snitch/engine/tests/test_analyze_mock.py |
+| snitch/engine/tests/test_state_builder.py |
 | snitch/tests/Feature/ExampleTest.php |
 | snitch/tests/Feature/Snitch/Ac001Test.php |
 | snitch/tests/Feature/Snitch/Ac002Test.php |
@@ -23,6 +25,8 @@
 | snitch/tests/Feature/Snitch/Ac014Test.php |
 | snitch/tests/Feature/Snitch/Ac015Test.php |
 | snitch/tests/Pest.php |
+| snitch/tests/SnitchFeatureTestCase.php |
+| snitch/tests/Support/SnitchTestSeeder.php |
 | snitch/tests/TestCase.php |
 | snitch/tests/Unit/ExampleTest.php |
 <!-- specsfy:documentator:end -->

@@ -4,9 +4,8 @@ namespace Tests;
 
 use App\Models\Company;
 use Database\Seeders\SnitchDemoSeeder;
-use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
 
-abstract class SnitchFeatureTestCase extends BaseTestCase
+abstract class SnitchFeatureTestCase extends TestCase
 {
     protected function setUp(): void
     {

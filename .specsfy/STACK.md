@@ -23,7 +23,7 @@ uma. Preserve decisões humanas nas seções livres deste arquivo.
 
 - **CodeNotch** permanece o produto principal versionado na raiz (Swift/Rust).
 - **SNITCH — Encarregado Virtual** vive em `snitch/` (Laravel), spec
-  `specs/draft/0001-snitch-encarregado-virtual/spec.md` (SPEC-0001).
+  `specs/in-progress/0001-snitch-encarregado-virtual/spec.md` (SPEC-0001).
 
 ### Stack normativa do SNITCH (SPEC-0001, NFR-001, AC-016, AC-017)
 
