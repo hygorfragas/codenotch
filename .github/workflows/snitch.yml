@@ -41,7 +41,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install engine test dependencies
-        run: pip install opencv-python-headless numpy supervision pytest
+        run: pip install opencv-python-headless numpy supervision httpx pytest
       - name: Pytest (mock vision)
         env:
           SNITCH_VISION_MOCK: '1'
