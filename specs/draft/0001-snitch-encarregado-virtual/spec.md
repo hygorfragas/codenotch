@@ -900,40 +900,40 @@ tests/
 
 #### Fechamento
 
-- [ ] T030 [DOC] Registrar a mudança em .specsfy/STACK.md — Refs: US-001, NFR-001, AC-016 — Depends: T022
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Conferir que STACK.md descreve a decisão desta spec.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T030 [DOC] Registrar a mudança em .specsfy/STACK.md — Refs: US-001, NFR-001, AC-016 — Depends: T022
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Conferir que STACK.md descreve a decisão desta spec.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
+  - [x] **EVIDENCE**: `monitor_context.mjs --check` CURRENT; `build_documentation.mjs --check` ok; STACK.md revisado 2026-10-29 (sync parcial: T022 pendente).
+  - [x] **IMPROVE**: Nenhuma: hub CodeNotch + SNITCH explicitado na mesma STACK.
 
 
-- [ ] T031 [DOC] Registrar a mudança em .specsfy/DATABASE.md — Refs: US-001, FR-001, AC-001 — Depends: T022
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Conferir que DATABASE.md descreve a decisão desta spec.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T031 [DOC] Registrar a mudança em .specsfy/DATABASE.md — Refs: US-001, FR-001, AC-001 — Depends: T022
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Conferir que DATABASE.md descreve a decisão desta spec.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
+  - [x] **EVIDENCE**: PostgreSQL normativo + SQLite teste documentados; entidades alvo até T022; migrations default inventariadas.
+  - [x] **IMPROVE**: Nenhuma: seção “domínio normativo” separada do inventário detectado.
 
 
-- [ ] T032 [DOC] Registrar a mudança em .specsfy/RULES.md — Refs: US-001, FR-003, AC-003 — Depends: T022
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Conferir que RULES.md descreve a decisão desta spec.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T032 [DOC] Registrar a mudança em .specsfy/RULES.md — Refs: US-001, FR-003, AC-003 — Depends: T022
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Conferir que RULES.md descreve a decisão desta spec.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
+  - [x] **EVIDENCE**: PR-001–003, FR-003, NFR-002 e papéis registrados em `.specsfy/RULES.md`.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária.
 
 
-- [ ] T033 [DOC] Registrar a mudança em PROJECT.md — Refs: US-001, FR-001, AC-001 — Depends: T022
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Conferir que PROJECT.md descreve a decisão desta spec.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T033 [DOC] Registrar a mudança em PROJECT.md — Refs: US-001, FR-001, AC-001 — Depends: T022
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Conferir que PROJECT.md descreve a decisão desta spec.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só atualiza documentação.
+  - [x] **EVIDENCE**: `PROJECT.md` descreve SNITCH vs CodeNotch e estado de implementação.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária.
 
 
 ### 15. Ordem de execução
