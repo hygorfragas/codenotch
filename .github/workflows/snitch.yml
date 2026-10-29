@@ -26,7 +26,7 @@ jobs:
       - name: Install Composer dependencies
         run: composer install --no-interaction --prefer-dist
       - name: Prepare test database
-        run: touch database/testing.sqlite
+        run: mkdir -p database && touch database/testing.sqlite
       - name: Pest (Snitch feature tests)
         run: php artisan test --env=testing tests/Feature/Snitch
 
