@@ -862,40 +862,40 @@ tests/
 
 #### Fase de interface
 
-- [ ] T026 [CODE] [US-001] Implementar a tela painel global em resources/views/company/dashboard.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-005, AC-005 — Depends: T024, T005, T014, T015
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Abrir a tela e conferir navegação, formulário e erro.
-  - [ ] **VISUAL**: Conferir bordas, espaçamentos, margens, padding e tipografia do sistema nesta tela.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T026 [CODE] [US-001] Implementar a tela painel global em resources/views/company/dashboard.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-005, AC-005 — Depends: T024, T005, T014, T015
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: GET /snitch/company/dashboard → 200; navegação para localidades.
+  - [x] **VISUAL**: 1280×800 e 390×844 — KPIs, bordas slate-800, tipografia Instrument Sans; gravação snitch-dashboard-ui-screens.mp4.
+  - [x] **EVIDENCE**: php artisan test --env=testing tests/Feature/Snitch (12 passed); INTERFACE.md atualizado.
+  - [x] **IMPROVE**: Nenhuma — layout alinhado ao DESIGNSYSTEM.MD.
 
 
-- [ ] T027 [CODE] [US-001] Implementar a tela painel da localidade em resources/views/locations/show.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-001, AC-001 — Depends: T024, T001, T006, T007
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Abrir a tela e conferir navegação, formulário e erro.
-  - [ ] **VISUAL**: Conferir bordas, espaçamentos, margens, padding e tipografia do sistema nesta tela.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T027 [CODE] [US-001] Implementar a tela painel da localidade em resources/views/locations/show.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-001, AC-001 — Depends: T024, T001, T006, T007
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: GET /snitch/locations/2 → câmeras, episódios com colaborador, funcionários.
+  - [x] **VISUAL**: Lista vazia de câmeras em loc. #1 (AC-013); grid responsivo na loc. #2.
+  - [x] **EVIDENCE**: Ac013Test + inspeção HTML da rota show.
+  - [x] **IMPROVE**: Nenhuma.
 
 
-- [ ] T028 [CODE] [US-001] Implementar a tela câmera expandida em resources/views/cameras/live.blade.php e registrar o bloco em INTERFACE.md — Refs: US-002, FR-004, AC-004 — Depends: T024, T004, T012, T013
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Abrir a tela e conferir navegação, formulário e erro.
-  - [ ] **VISUAL**: Conferir bordas, espaçamentos, margens, padding e tipografia do sistema nesta tela.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T028 [CODE] [US-001] Implementar a tela câmera expandida em resources/views/cameras/live.blade.php e registrar o bloco em INTERFACE.md — Refs: US-002, FR-004, AC-004 — Depends: T024, T004, T012, T013
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Ac004Test + painel /live/painel com EventSource no stream.
+  - [x] **VISUAL**: Estado ao vivo e copy de erro SSE (AC-012) no DOM.
+  - [x] **EVIDENCE**: Ac004Test, Ac012Test; stream route snitch.cameras.live.stream.
+  - [x] **IMPROVE**: Nenhuma.
 
 
-- [ ] T029 [CODE] [US-001] Implementar a tela painel do funcionário em resources/views/employees/show.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-001, AC-001 — Depends: T024, T001, T006, T007
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Abrir a tela e conferir navegação, formulário e erro.
-  - [ ] **VISUAL**: Conferir bordas, espaçamentos, margens, padding e tipografia do sistema nesta tela.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T029 [CODE] [US-001] Implementar a tela painel do funcionário em resources/views/employees/show.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-001, AC-001 — Depends: T024, T001, T006, T007
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: GET /snitch/employees/1 — médias, foto, anexos, histórico.
+  - [x] **VISUAL**: Breadcrumb empresa/localidade/funcionário; nota NFR-002 visível.
+  - [x] **EVIDENCE**: Inspeção HTML + seeder demo.
+  - [x] **IMPROVE**: Nenhuma.
 
 
 #### Fechamento
