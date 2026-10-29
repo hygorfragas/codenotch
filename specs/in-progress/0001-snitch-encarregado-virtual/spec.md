@@ -474,17 +474,31 @@ tests/
 
 | Entidade | Identidade | Atributos e regras | Relações |
 | --- | --- | --- | --- |
-| [Entidade] | [chave] | [campos, validações] | [cardinalidade] |
+| Empresa (`companies`) | `id` | `name`; isolamento por VPS (NFR-001) | 1:N localidades, colaboradores, episódios, usuários |
+| Localidade (`locations`) | `id` | `company_id`, `name`; soft delete | N:1 empresa; 1:N câmeras, episódios, requisitos EPI, avisos, gestores |
+| Colaborador (`employees`) | `id` | `company_id`, `name`, `photo_path`; único por empresa | N:1 empresa; 1:N episódios, vínculos de trilha |
+| Câmera (`cameras`) | `id` | `location_id`, `name`, `sector`, `stream_url`, `device_url`, `credential` cifrada, `dvr_url`; soft delete; credencial oculta no histórico (NFR-002) | N:1 localidade; 1:N zonas, trilhas, episódios |
+| Zona (`zones`) | `id` | `camera_id`, `name`, `type` (`rest`, `passage`, `risk`), `max_dwell_seconds` opcional, `polygon` JSON; soft delete | N:1 câmera; 1:N episódios de ociosidade |
+| Requisito EPI (`location_ppe_requirements`) | `id` | `location_id`, `category`, `required`; único por localidade+categoria | N:1 localidade |
+| Smartphone (`location_smartphone_settings`) | `id` | `location_id` único, `enabled`, `hand_limit_seconds` opcional | 1:1 localidade |
+| Canal de aviso (`location_alert_channels`) | `id` | `location_id`, `episode_type`, `channel`, `enabled`, `config` JSON | N:1 localidade |
+| Vínculo de trilha (`tracker_links`) | `id` | `camera_id`, `tracker_id`, `employee_id` opcional, `confirmed_at`; único por câmera+trilha | N:1 câmera; N:1 colaborador quando confirmado |
+| Episódio (`episodes`) | `id` | `company_id`, `location_id`, `employee_id` opcional, `camera_id`, `zone_id`, `type` (`missing_ppe`, `idle_zone`, `smartphone`), `photo`, `recorded_at`, `metadata` JSON | N:1 empresa, localidade; opcional colaborador, câmera, zona; 1:N avisos |
+| Aviso (`alerts`) | `id` | `episode_id`, `channel`, `panel_only`, `delivered_at` | N:1 episódio |
+| Usuário (`users` estendido) | `id` | `company_id`, `location_id` opcional, `role` (`admin`, `manager`) | N:1 empresa; gestor N:1 localidade |
 
 #### Estados e transições
 
 | Entidade | Estado atual | Evento | Próximo estado | Invariantes |
 | --- | --- | --- | --- | --- |
-| [Entidade] | [estado] | [evento] | [estado] | [regra] |
+| Episódio | gravado | — | imutável | foto, data e hora permanecem após falha de SSE (AC-012) |
+| Câmera / zona / localidade | ativa | admin apaga | soft deleted | histórico de episódios permanece (PR-002, erros §7) |
+| Vínculo de trilha | pendente | gestor confirma | ligado | sem `employee_id` confirmado, episódio não entra no histórico do colaborador (AC-007) |
 
 #### Migração e retenção
 
-- [Estratégia ou “Não aplicável”.]
+- Migration versionada `snitch/database/migrations/2026_10_28_000001_create_snitch_tables.php`; rollback via `down()` drop na ordem inversa.
+- Episódios e fotos retidos enquanto a empresa operar; exclusão lógica só em entidades de configuração (câmera, zona, localidade).
 
 ### 10. Interfaces e contratos
 
@@ -824,13 +838,14 @@ tests/
 
 #### Fase 2 — Fundação
 
-- [ ] T022 [CODE] [MIGRATION] [US-001] Criar tabelas do SNITCH em database/migrations/2026_10_28_000001_create_snitch_tables.php — Refs: US-001, FR-001, AC-001 — Depends: T001, T006, T007
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Aplicar php artisan migrate --env=testing e consultar php artisan migrate:status --env=testing.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa altera somente a estrutura persistente.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T022 [CODE] [MIGRATION] [US-001] Criar tabelas do SNITCH em database/migrations/2026_10_28_000001_create_snitch_tables.php — Refs: US-001, FR-001, AC-001 — Depends: T001, T006, T007
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Aplicar php artisan migrate --env=testing e consultar php artisan migrate:status --env=testing.
+  - [x] **VISUAL**: Não aplicável porque a tarefa altera somente a estrutura persistente.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: schema alinhado à seção 9 e models Eloquent espelham relações.
+<!-- specsfy:evidence {"task":"T022","refs":["US-001","FR-001","AC-001"],"files":["snitch/database/migrations/2026_10_28_000001_create_snitch_tables.php","snitch/app/Models/Company.php","snitch/app/Models/Location.php","snitch/app/Models/Employee.php","snitch/app/Models/Camera.php","snitch/app/Models/Zone.php","snitch/app/Models/Episode.php","snitch/app/Models/Alert.php","snitch/app/Models/TrackerLink.php","snitch/app/Models/LocationPpeRequirement.php","snitch/app/Models/LocationSmartphoneSetting.php","snitch/app/Models/LocationAlertChannel.php","snitch/database/factories/CompanyFactory.php","snitch/database/factories/LocationFactory.php","snitch/database/factories/EmployeeFactory.php","snitch/database/factories/CameraFactory.php","snitch/database/factories/EpisodeFactory.php"],"commands":[{"run":"cd snitch && php artisan migrate --env=testing --force","exit":0},{"run":"cd snitch && php artisan migrate:status --env=testing","exit":0}]} -->
 
 
 - [ ] T023 [CODE] [US-001] Analisar o fluxo e desenhar as caixas em engine/analyze_stream.py — Refs: US-001, FR-001, FR-002, FR-003, AC-001 — Depends: T001, T002, T003
