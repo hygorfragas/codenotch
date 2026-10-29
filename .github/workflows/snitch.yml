@@ -1,0 +1,48 @@
+name: SNITCH (Laravel + Python)
+
+on:
+  push:
+    paths:
+      - 'snitch/**'
+      - '.github/workflows/snitch.yml'
+  pull_request:
+    paths:
+      - 'snitch/**'
+      - '.github/workflows/snitch.yml'
+
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: snitch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, sqlite3, xml, curl
+          coverage: none
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist
+      - name: Prepare test database
+        run: touch database/testing.sqlite
+      - name: Pest (Snitch feature tests)
+        run: php artisan test --env=testing tests/Feature/Snitch
+
+  python-engine:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: snitch/engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install engine test dependencies
+        run: pip install opencv-python-headless numpy supervision pytest
+      - name: Pytest (mock vision)
+        env:
+          SNITCH_VISION_MOCK: '1'
+        run: pytest tests/ -q
