@@ -54,6 +54,14 @@ class EpisodeRecorder
             return null;
         }
 
+        if (! array_key_exists('max_time_seconds', $payload) || $payload['max_time_seconds'] === null) {
+            return null;
+        }
+
+        if (($payload['time_exceeded'] ?? $payload['max_time_exceeded'] ?? false) !== true) {
+            return null;
+        }
+
         $zone = $payload['zone'] ?? 'passagem';
 
         return $this->persistEpisode(
@@ -70,6 +78,10 @@ class EpisodeRecorder
     public function recordSmartphone(array $payload): ?Episode
     {
         if (($payload['enabled'] ?? false) !== true) {
+            return null;
+        }
+
+        if (array_key_exists('limit_exceeded', $payload) && $payload['limit_exceeded'] !== true) {
             return null;
         }
 

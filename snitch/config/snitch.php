@@ -12,6 +12,10 @@ return [
     |
     */
 
+    'deployment' => [
+        'colocated' => filter_var(env('SNITCH_COLOCATED', true), FILTER_VALIDATE_BOOL),
+    ],
+
     'vision' => [
         'engine_url' => env('SNITCH_ENGINE_URL', 'http://127.0.0.1:8765'),
         'sse_path' => env('SNITCH_ENGINE_SSE_PATH', '/cameras/{camera}/stream'),
