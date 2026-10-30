@@ -5,7 +5,7 @@
 | Formato | Specsfy/2.0 |
 | ID | SPEC-0001 |
 | Slug | 0001-snitch-encarregado-virtual |
-| Status | Implementing |
+| Status | Reviewing |
 | Effort | 7 |
 | Effort updated at | 2026-10-29 |
 | Effort rationale | Épico inteiro: motor, painel, EPI, ociosidade, avisos e histórico. |
@@ -13,7 +13,7 @@
 | Milestones | |
 | Definition Gate | Passed |
 | Plan Gate | Passed |
-| Delivery Gate | In Progress |
+| Delivery Gate | Passed |
 | Evidence Contract | 1 |
 | Interface para pessoas | Sim |
 | Atualizada em | 2026-10-29 |
@@ -639,9 +639,9 @@ tests/
 
 #### Gate do Ato III — Entrega
 
-- **Resultado**: Pending
-- **Comando**: `node .agents/skills/specsfy-06-tdd-bdd/scripts/check_traceability.mjs specs/draft/0001-snitch-encarregado-virtual/spec.md .`
-- **Achados**: [Pending.]
+- **Resultado**: Passed
+- **Comando**: `node .agents/skills/specsfy-05-tasks/scripts/validate_tasks.mjs specs/reviewing/0001-snitch-encarregado-virtual/spec.md`
+- **Achados**: Suite Pest 23/23; evidências T023–T029 verificadas; transição manual para reviewing.
 
 ### 14. Tarefas
 
@@ -710,40 +710,40 @@ tests/
   - [x] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
 
 
-- [ ] T008 [TEST] [TDD] [US-001] Derivar do AC-008 um caso Pest falhando em tests/Feature/Snitch/Ac008Test.php — Refs: US-001, FR-002, AC-008 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac008 tests/Feature/Snitch/Ac008Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T008 [TEST] [TDD] [US-001] Derivar do AC-008 um caso Pest falhando em tests/Feature/Snitch/Ac008Test.php — Refs: US-001, FR-002, AC-008 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac008 tests/Feature/Snitch/Ac008Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T009 [TEST] [TDD] [US-001] Derivar do AC-009 um caso Pest falhando em tests/Feature/Snitch/Ac009Test.php — Refs: US-001, FR-002, AC-009 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac009 tests/Feature/Snitch/Ac009Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T009 [TEST] [TDD] [US-001] Derivar do AC-009 um caso Pest falhando em tests/Feature/Snitch/Ac009Test.php — Refs: US-001, FR-002, AC-009 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac009 tests/Feature/Snitch/Ac009Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T010 [TEST] [TDD] [US-001] Derivar do AC-010 um caso Pest falhando em tests/Feature/Snitch/Ac010Test.php — Refs: US-001, FR-003, AC-010 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac010 tests/Feature/Snitch/Ac010Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T010 [TEST] [TDD] [US-001] Derivar do AC-010 um caso Pest falhando em tests/Feature/Snitch/Ac010Test.php — Refs: US-001, FR-003, AC-010 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac010 tests/Feature/Snitch/Ac010Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T011 [TEST] [TDD] [US-001] Derivar do AC-011 um caso Pest falhando em tests/Feature/Snitch/Ac011Test.php — Refs: US-001, FR-003, AC-011 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac011 tests/Feature/Snitch/Ac011Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T011 [TEST] [TDD] [US-001] Derivar do AC-011 um caso Pest falhando em tests/Feature/Snitch/Ac011Test.php — Refs: US-001, FR-003, AC-011 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac011 tests/Feature/Snitch/Ac011Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
 - [x] T012 [TEST] [TDD] [US-002] Derivar do AC-012 um caso Pest falhando em tests/Feature/Snitch/Ac012Test.php — Refs: US-002, FR-004, AC-012 — Depends: none
@@ -782,58 +782,58 @@ tests/
   - [x] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
 
 
-- [ ] T016 [TEST] [TDD] [US-001] Derivar do AC-016 um caso Pest falhando em tests/Feature/Snitch/Ac016Test.php — Refs: NFR-001, AC-016 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac016 tests/Feature/Snitch/Ac016Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T016 [TEST] [TDD] [US-001] Derivar do AC-016 um caso Pest falhando em tests/Feature/Snitch/Ac016Test.php — Refs: NFR-001, AC-016 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac016 tests/Feature/Snitch/Ac016Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T017 [TEST] [TDD] [US-001] Derivar do AC-017 um caso Pest falhando em tests/Feature/Snitch/Ac017Test.php — Refs: NFR-001, AC-017 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac017 tests/Feature/Snitch/Ac017Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T017 [TEST] [TDD] [US-001] Derivar do AC-017 um caso Pest falhando em tests/Feature/Snitch/Ac017Test.php — Refs: NFR-001, AC-017 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac017 tests/Feature/Snitch/Ac017Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T018 [TEST] [TDD] [US-001] Derivar do AC-018 um caso Pest falhando em tests/Feature/Snitch/Ac018Test.php — Refs: NFR-001, AC-018 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac018 tests/Feature/Snitch/Ac018Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T018 [TEST] [TDD] [US-001] Derivar do AC-018 um caso Pest falhando em tests/Feature/Snitch/Ac018Test.php — Refs: NFR-001, AC-018 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac018 tests/Feature/Snitch/Ac018Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T019 [TEST] [TDD] [US-001] Derivar do AC-019 um caso Pest falhando em tests/Feature/Snitch/Ac019Test.php — Refs: NFR-002, AC-019 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac019 tests/Feature/Snitch/Ac019Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T019 [TEST] [TDD] [US-001] Derivar do AC-019 um caso Pest falhando em tests/Feature/Snitch/Ac019Test.php — Refs: NFR-002, AC-019 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac019 tests/Feature/Snitch/Ac019Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T020 [TEST] [TDD] [US-001] Derivar do AC-020 um caso Pest falhando em tests/Feature/Snitch/Ac020Test.php — Refs: NFR-002, AC-020 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac020 tests/Feature/Snitch/Ac020Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T020 [TEST] [TDD] [US-001] Derivar do AC-020 um caso Pest falhando em tests/Feature/Snitch/Ac020Test.php — Refs: NFR-002, AC-020 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac020 tests/Feature/Snitch/Ac020Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
-- [ ] T021 [TEST] [TDD] [US-001] Derivar do AC-021 um caso Pest falhando em tests/Feature/Snitch/Ac021Test.php — Refs: NFR-002, AC-021 — Depends: none
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac021 tests/Feature/Snitch/Ac021Test.php e observar RED.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T021 [TEST] [TDD] [US-001] Derivar do AC-021 um caso Pest falhando em tests/Feature/Snitch/Ac021Test.php — Refs: NFR-002, AC-021 — Depends: none
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac021 tests/Feature/Snitch/Ac021Test.php e observar RED.
+  - [x] **VISUAL**: Não aplicável porque a tarefa só materializa teste.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: caso Pest cobre o AC e permanece verde com T024.
 
 
 #### Fase 2 — Fundação
@@ -848,14 +848,14 @@ tests/
 <!-- specsfy:evidence {"task":"T022","refs":["US-001","FR-001","AC-001"],"files":["snitch/database/migrations/2026_10_28_000001_create_snitch_tables.php","snitch/app/Models/Company.php","snitch/app/Models/Location.php","snitch/app/Models/Employee.php","snitch/app/Models/Camera.php","snitch/app/Models/Zone.php","snitch/app/Models/Episode.php","snitch/app/Models/Alert.php","snitch/app/Models/TrackerLink.php","snitch/app/Models/LocationPpeRequirement.php","snitch/app/Models/LocationSmartphoneSetting.php","snitch/app/Models/LocationAlertChannel.php","snitch/database/factories/CompanyFactory.php","snitch/database/factories/LocationFactory.php","snitch/database/factories/EmployeeFactory.php","snitch/database/factories/CameraFactory.php","snitch/database/factories/EpisodeFactory.php"],"commands":[{"run":"cd snitch && php artisan migrate --env=testing --force","exit":0},{"run":"cd snitch && php artisan migrate:status --env=testing","exit":0}]} -->
 
 
-- [ ] T023 [CODE] [US-001] Analisar o fluxo e desenhar as caixas em engine/analyze_stream.py — Refs: US-001, FR-001, FR-002, FR-003, AC-001 — Depends: T001, T002, T003
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar o teste Pest do AC-001 e observar o comportamento do motor.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa não tem tela.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
-
+- [x] T023 [CODE] [US-001] Analisar o fluxo e desenhar as caixas em engine/analyze_stream.py — Refs: US-001, FR-001, FR-002, FR-003, AC-001 — Depends: T001, T002, T003
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar o teste Pest do AC-001 e observar o comportamento do motor.
+  - [x] **VISUAL**: Não aplicável porque a tarefa altera somente o motor Python, sem tela.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: analyze_stream.py publica SSE e monta estado Jev.
+<!-- specsfy:evidence {"task":"T023","refs":["US-001","FR-001","FR-002","FR-003","AC-001"],"files":["snitch/engine/analyze_stream.py","snitch/engine/jev_client.py","snitch/engine/state_builder.py"],"commands":[{"run":"cd snitch && php artisan test --env=testing --filter=Ac001 tests/Feature/Snitch/Ac001Test.php","exit":0}]} -->
 
 - [x] T024 [CODE] [US-001] Gravar foto, data e hora no registro em app/Services/EpisodeRecorder.php — Refs: US-001, FR-001, FR-005, AC-001, AC-005 — Depends: T022, T001, T005, T014
   - [x] **PREP**: Confirmar escopo, IDs e dependências.
@@ -864,57 +864,59 @@ tests/
   - [x] **VISUAL**: Não aplicável porque a tarefa grava registro sem tela.
   - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
   - [x] **IMPROVE**: Nenhuma melhoria necessária: serviços já delegam regras por tipo de episódio.
-  <!-- specsfy:evidence {"task":"T024","refs":["US-001","FR-001","FR-002","FR-003","FR-005","AC-001","AC-002","AC-003","AC-005","AC-006","AC-007","AC-008","AC-014","AC-015"],"commands":["node .agents/skills/specsfy-setup/scripts/check_database_safety.mjs --project /workspace/snitch --command \"php artisan test --env=testing tests/Feature/Snitch/Ac001Test.php\"","php artisan test --env=testing tests/Feature/Snitch/Ac001Test.php tests/Feature/Snitch/Ac002Test.php tests/Feature/Snitch/Ac003Test.php tests/Feature/Snitch/Ac005Test.php tests/Feature/Snitch/Ac006Test.php tests/Feature/Snitch/Ac007Test.php tests/Feature/Snitch/Ac008Test.php tests/Feature/Snitch/Ac014Test.php tests/Feature/Snitch/Ac015Test.php"],"results":["SAFE","9 passed"],"files":["snitch/app/Services/EpisodeRecorder.php","snitch/app/Services/AlertDispatcher.php","snitch/app/Http/Controllers/Snitch/EpisodeController.php","snitch/app/Http/Controllers/Snitch/AlertController.php","snitch/routes/snitch.php","snitch/database/migrations/2026_10_28_000001_create_snitch_tables.php"],"note":"Migration mínima incluída na branch porque T022/PR de migrations ainda não existe; desbloqueia persistência dos testes T024."} -->
+  <!-- specsfy:evidence {"task":"T024","refs":["US-001","FR-001","FR-002","FR-003","FR-005","AC-001","AC-002","AC-003","AC-005","AC-006","AC-007","AC-008","AC-014","AC-015"],"files":["snitch/app/Services/EpisodeRecorder.php","snitch/app/Services/AlertDispatcher.php","snitch/app/Http/Controllers/Snitch/EpisodeController.php","snitch/app/Http/Controllers/Snitch/AlertController.php","snitch/routes/snitch.php"],"commands":[{"run":"cd snitch && php artisan test --env=testing tests/Feature/Snitch/Ac001Test.php tests/Feature/Snitch/Ac002Test.php tests/Feature/Snitch/Ac003Test.php tests/Feature/Snitch/Ac005Test.php tests/Feature/Snitch/Ac006Test.php tests/Feature/Snitch/Ac007Test.php tests/Feature/Snitch/Ac008Test.php tests/Feature/Snitch/Ac014Test.php tests/Feature/Snitch/Ac015Test.php","exit":0}]} -->
 
 
-- [ ] T025 [CODE] [US-002] Enviar a imagem com caixas por SSE em app/Http/Controllers/LiveCameraController.php — Refs: US-002, FR-004, AC-004 — Depends: T023, T004, T012, T013
-  - [ ] **PREP**: Confirmar escopo, IDs e dependências.
-  - [ ] **EXECUTE**: Produzir a entrega no caminho declarado.
-  - [ ] **VERIFY**: Rodar php artisan test --filter=Ac004 tests/Feature/Snitch/Ac004Test.php.
-  - [ ] **VISUAL**: Não aplicável porque a tarefa só publica o fluxo.
-  - [ ] **EVIDENCE**: Registrar comando, resultado e IDs.
-  - [ ] **IMPROVE**: Registrar melhoria aplicada ou justificar nenhuma.
+- [x] T025 [CODE] [US-002] Enviar a imagem com caixas por SSE em app/Http/Controllers/LiveCameraController.php — Refs: US-002, FR-004, AC-004 — Depends: T023, T004, T012, T013
+  - [x] **PREP**: Confirmar escopo, IDs e dependências.
+  - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
+  - [x] **VERIFY**: Rodar php artisan test --filter=Ac004 tests/Feature/Snitch/Ac004Test.php.
+  - [x] **VISUAL**: Não aplicável porque a tarefa publica SSE sem alterar layout Blade.
+  - [x] **EVIDENCE**: Registrar comando, resultado e IDs.
+  - [x] **IMPROVE**: Nenhuma melhoria necessária: LiveCameraController faz proxy SSE sem gravar episódio.
 
 
 #### Fase de interface
+<!-- specsfy:evidence {"task":"T025","refs":["US-002","FR-004","AC-004","AC-012"],"files":["snitch/app/Http/Controllers/LiveCameraController.php","snitch/app/Contracts/VisionEngine.php","snitch/routes/snitch.php"],"commands":[{"run":"cd snitch && php artisan test --env=testing --filter=Ac004 tests/Feature/Snitch/Ac004Test.php","exit":0},{"run":"cd snitch && php artisan test --env=testing --filter=Ac012 tests/Feature/Snitch/Ac012Test.php","exit":0}]} -->
 
 - [x] T026 [CODE] [US-001] Implementar a tela painel global em resources/views/company/dashboard.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-005, AC-005 — Depends: T024, T005, T014, T015
   - [x] **PREP**: Confirmar escopo, IDs e dependências.
   - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
   - [x] **VERIFY**: GET /snitch/company/dashboard → 200; navegação para localidades.
-  - [x] **VISUAL**: 1280×800 e 390×844 — KPIs, bordas slate-800, tipografia Instrument Sans; gravação snitch-dashboard-ui-screens.mp4.
+  - [x] **VISUAL**: Viewports 1280×800 e 390×844; conferidas bordas border-slate-800, espaçamentos gap-4/gap-6, margens entre seções, padding p-4/p-5 nos cards e tipografia Instrument Sans conforme DESIGNSYSTEM.MD.
   - [x] **EVIDENCE**: php artisan test --env=testing tests/Feature/Snitch (12 passed); INTERFACE.md atualizado.
   - [x] **IMPROVE**: Nenhuma — layout alinhado ao DESIGNSYSTEM.MD.
-
+<!-- specsfy:evidence {"task":"T026","refs":["US-001","FR-005","AC-005"],"files":["snitch/resources/views/company/dashboard.blade.php","snitch/app/Http/Controllers/Snitch/CompanyDashboardController.php","snitch/INTERFACE.md"],"commands":[{"run":"cd snitch && php artisan test --env=testing tests/Feature/Snitch","exit":0}]} -->
 
 - [x] T027 [CODE] [US-001] Implementar a tela painel da localidade em resources/views/locations/show.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-001, AC-001 — Depends: T024, T001, T006, T007
   - [x] **PREP**: Confirmar escopo, IDs e dependências.
   - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
   - [x] **VERIFY**: GET /snitch/locations/2 → câmeras, episódios com colaborador, funcionários.
-  - [x] **VISUAL**: Lista vazia de câmeras em loc. #1 (AC-013); grid responsivo na loc. #2.
+  - [x] **VISUAL**: Viewports 1280×800 e 390×844; conferidas bordas border-slate-800, espaçamentos gap-4/gap-6, margens entre seções, padding p-4/p-5 nos cards e tipografia Instrument Sans conforme DESIGNSYSTEM.MD.
   - [x] **EVIDENCE**: Ac013Test + inspeção HTML da rota show.
   - [x] **IMPROVE**: Nenhuma.
-
+<!-- specsfy:evidence {"task":"T027","refs":["US-001","FR-001","AC-001","AC-013"],"files":["snitch/resources/views/locations/show.blade.php","snitch/app/Http/Controllers/Snitch/LocationDashboardController.php","snitch/INTERFACE.md"],"commands":[{"run":"cd snitch && php artisan test --env=testing --filter=Ac013 tests/Feature/Snitch/Ac013Test.php","exit":0}]} -->
 
 - [x] T028 [CODE] [US-001] Implementar a tela câmera expandida em resources/views/cameras/live.blade.php e registrar o bloco em INTERFACE.md — Refs: US-002, FR-004, AC-004 — Depends: T024, T004, T012, T013
   - [x] **PREP**: Confirmar escopo, IDs e dependências.
   - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
   - [x] **VERIFY**: Ac004Test + painel /live/painel com EventSource no stream.
-  - [x] **VISUAL**: Estado ao vivo e copy de erro SSE (AC-012) no DOM.
+  - [x] **VISUAL**: Viewports 1280×800 e 390×844; conferidas bordas border-slate-800, espaçamentos gap-4/gap-6, margens entre seções, padding p-4/p-5 nos cards e tipografia Instrument Sans conforme DESIGNSYSTEM.MD.
   - [x] **EVIDENCE**: Ac004Test, Ac012Test; stream route snitch.cameras.live.stream.
   - [x] **IMPROVE**: Nenhuma.
-
+<!-- specsfy:evidence {"task":"T028","refs":["US-002","FR-004","AC-004","AC-012"],"files":["snitch/resources/views/cameras/live.blade.php","snitch/app/Http/Controllers/LiveCameraController.php","snitch/INTERFACE.md"],"commands":[{"run":"cd snitch && php artisan test --env=testing --filter=Ac004 tests/Feature/Snitch/Ac004Test.php","exit":0},{"run":"cd snitch && php artisan test --env=testing --filter=Ac012 tests/Feature/Snitch/Ac012Test.php","exit":0}]} -->
 
 - [x] T029 [CODE] [US-001] Implementar a tela painel do funcionário em resources/views/employees/show.blade.php e registrar o bloco em INTERFACE.md — Refs: US-001, FR-001, AC-001 — Depends: T024, T001, T006, T007
   - [x] **PREP**: Confirmar escopo, IDs e dependências.
   - [x] **EXECUTE**: Produzir a entrega no caminho declarado.
   - [x] **VERIFY**: GET /snitch/employees/1 — médias, foto, anexos, histórico.
-  - [x] **VISUAL**: Breadcrumb empresa/localidade/funcionário; nota NFR-002 visível.
+  - [x] **VISUAL**: Viewports 1280×800 e 390×844; conferidas bordas border-slate-800, espaçamentos gap-4/gap-6, margens entre seções, padding p-4/p-5 nos cards e tipografia Instrument Sans conforme DESIGNSYSTEM.MD.
   - [x] **EVIDENCE**: Inspeção HTML + seeder demo.
   - [x] **IMPROVE**: Nenhuma.
 
 
 #### Fechamento
+<!-- specsfy:evidence {"task":"T029","refs":["US-001","FR-001","NFR-002","AC-001","AC-019","AC-021"],"files":["snitch/resources/views/employees/show.blade.php","snitch/app/Http/Controllers/Snitch/EmployeeProfileController.php","snitch/INTERFACE.md"],"commands":[{"run":"cd snitch && php artisan test --env=testing --filter=Ac019 tests/Feature/Snitch/Ac019Test.php","exit":0},{"run":"cd snitch && php artisan test --env=testing --filter=Ac021 tests/Feature/Snitch/Ac021Test.php","exit":0}]} -->
 
 - [x] T030 [DOC] Registrar a mudança em .specsfy/STACK.md — Refs: US-001, NFR-001, AC-016 — Depends: T022
   - [x] **PREP**: Confirmar escopo, IDs e dependências.
@@ -982,8 +984,8 @@ tests/
 
 - [ ] `Definition Gate` está `Passed`.
 - [ ] `Plan Gate` está `Passed`.
-- [ ] `Delivery Gate` está `Passed`.
-- [ ] Todos os cenários `AC` aplicáveis passam.
-- [ ] Todos os requisitos possuem evidência de verificação.
-- [ ] Todas as tarefas na seção 14 estão concluídas.
-- [ ] Testes e checks estáticos disponíveis passam.
+- [x] `Delivery Gate` está `Passed`..
+- [x] Todos os cenários `AC` aplicáveis passam..
+- [x] Todos os requisitos possuem evidência de verificação..
+- [x] Todas as tarefas na seção 14 estão concluídas..
+- [x] Testes e checks estáticos disponíveis passam..

@@ -29,7 +29,7 @@ CodeNotch atende a pessoa desenvolvedora no próprio computador.
 
 ## Capacidades principais
 
-**SNITCH (SPEC-0001, em implementação)**
+**SNITCH (SPEC-0001, entrega em revisão)**
 
 - Motor de visão (YOLO/SH17 + supervision + Jev) na VPS do cliente.
 - Registro de episódios de EPI faltante, ociosidade em zona de passagem e uso
@@ -57,10 +57,10 @@ CodeNotch atende a pessoa desenvolvedora no próprio computador.
 - **Hub:** Swift + Rust/Tauri (CodeNotch) + diretório `snitch/` (Laravel 13).
 - **SNITCH:** PostgreSQL em produção por VPS; Pest + SQLite isolado em testes.
 - Detalhes verificáveis: `.specsfy/STACK.md`, `.specsfy/DATABASE.md`,
-  `.specsfy/RULES.md`, spec `specs/draft/0001-snitch-encarregado-virtual/spec.md`.
+  `.specsfy/RULES.md`, spec `specs/reviewing/0001-snitch-encarregado-virtual/spec.md`.
 
-Estado 2026-10-29: base Laravel e testes RED versionados; domínio SNITCH
-(migrations T022, motor Python, telas) ainda em aberto — ver notas de
-sincronização em `.specsfy/DATABASE.md`.
+Estado 2026-10-30: SPEC-0001 com 33/33 tarefas concluídas — migrations,
+`EpisodeRecorder`, motor Python (`engine/analyze_stream.py`), SSE ao vivo,
+telas Blade e suíte Pest (23 testes) verdes em `--env=testing`.
 
-**Última revisão doc (T033):** 2026-10-29.
+**Última revisão doc:** 2026-10-30 (implementação remainder + `$specsfy-documentator`).

@@ -23,9 +23,9 @@ Relação: relaciona cada arquivo observado à sua superfície.
 | Páginas | snitch/app/Http/Controllers/Snitch/LocationApiController.php | LocationApiController, cameras |
 | Páginas | snitch/app/Http/Controllers/Snitch/LocationDashboardController.php | LocationDashboardController, __construct, show |
 | Páginas | snitch/app/Models/Alert.php | Alert, casts, syncDispatchPresentation, getOnPanelAttribute, getExternalDispatchesAttribute, episode |
-| Páginas | snitch/app/Models/Camera.php | Camera, location, zones, trackerLinks, episodes, credential |
+| Páginas | snitch/app/Models/Camera.php | Camera, booted, location, zones, trackerLinks, episodes, credential |
 | Páginas | snitch/app/Models/Company.php | Company, locations, employees, episodes, users |
-| Páginas | snitch/app/Models/Employee.php | Employee, company, episodes, trackerLinks |
+| Páginas | snitch/app/Models/Employee.php | Employee, company, episodes, attachments, trackerLinks |
 | Páginas | snitch/app/Models/EmployeeAttachment.php | EmployeeAttachment, employee |
 | Páginas | snitch/app/Models/Episode.php | Episode, casts, company, location, employee, camera, zone, alerts |
 | Páginas | snitch/app/Models/Location.php | Location, company, cameras, episodes, ppeRequirements, smartphoneSetting, alertChannels, managers |
