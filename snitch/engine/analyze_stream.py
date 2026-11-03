@@ -245,16 +245,31 @@ class StreamAnalyzer:
         return annotated, state
 
     def frames(self, source: str | int) -> Iterator[tuple[np.ndarray, dict[str, Any]]]:
-        capture = cv2.VideoCapture(source)
-        if not capture.isOpened():
-            raise RuntimeError(f"Não foi possível abrir o fluxo: {source}")
+        loop_file = _env_flag("SNITCH_LOOP_SOURCE") and isinstance(source, str)
 
+        def open_capture() -> tuple[cv2.VideoCapture, float]:
+            capture = cv2.VideoCapture(source)
+            if not capture.isOpened():
+                raise RuntimeError(f"Não foi possível abrir o fluxo: {source}")
+            fps = float(capture.get(cv2.CAP_PROP_FPS) or 0)
+            delay = (1.0 / fps) if fps > 1 else 0.0
+            return capture, delay
+
+        capture, delay = open_capture()
         try:
             while True:
                 ok, frame = capture.read()
                 if not ok:
-                    break
+                    if not loop_file:
+                        break
+                    capture.release()
+                    capture, delay = open_capture()
+                    ok, frame = capture.read()
+                    if not ok:
+                        break
                 yield self.process_frame(frame)
+                if loop_file and delay:
+                    time.sleep(delay)
         finally:
             capture.release()
 

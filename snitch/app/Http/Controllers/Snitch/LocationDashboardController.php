@@ -16,7 +16,7 @@ class LocationDashboardController extends Controller
     public function show(int $location): View
     {
         $model = Location::query()
-            ->with(['company', 'cameras', 'employees'])
+            ->with(['company.employees', 'cameras'])
             ->findOrFail($location);
 
         return view('locations.show', [
@@ -25,7 +25,7 @@ class LocationDashboardController extends Controller
             'totals' => $this->dashboard->locationTotals($model),
             'episodes' => $this->dashboard->locationEpisodesWithEmployee($model),
             'cameras' => $model->cameras,
-            'employees' => $model->employees()->orderBy('name')->get(),
+            'employees' => $model->company->employees->sortBy('name')->values(),
         ]);
     }
 }

@@ -22,6 +22,7 @@
             </div>
             <p id="live-status" class="text-sm font-medium text-emerald-400" role="status">Conectando…</p>
         </div>
+        <p id="live-decisions" class="mb-4 text-sm text-slate-300"></p>
 
         <div class="relative aspect-video overflow-hidden rounded-lg border border-slate-700 bg-slate-950">
             <img id="live-frame" alt="Fluxo ao vivo com caixas de detecção" class="h-full w-full object-contain" hidden>
@@ -41,23 +42,42 @@
         (() => {
             const frame = document.getElementById('live-frame');
             const status = document.getElementById('live-status');
+            const decisions = document.getElementById('live-decisions');
             const errorBox = document.getElementById('live-error');
             const placeholder = document.getElementById('live-placeholder');
             const streamUrl = @json($streamUrl);
+            const jevLabels = {
+                any_missing_required_ppe: 'EPI obrigatório faltando',
+                any_person_in_restricted_zone: 'Pessoa em zona restrita',
+            };
 
             const source = new EventSource(streamUrl);
 
             source.addEventListener('frame', (event) => {
                 try {
                     const payload = JSON.parse(event.data);
-                    if (payload.image) {
-                        frame.src = payload.image;
+                    const jpeg = payload.image
+                        || (payload.image_jpeg_base64
+                            ? `data:image/jpeg;base64,${payload.image_jpeg_base64}`
+                            : null);
+                    if (jpeg) {
+                        frame.src = jpeg;
                         frame.hidden = false;
                         placeholder.classList.add('hidden');
                         errorBox.classList.add('hidden');
                         errorBox.classList.remove('flex');
                         status.textContent = 'Ao vivo';
                         status.className = 'text-sm font-medium text-emerald-400';
+                    }
+                    const jev = payload.state && payload.state.jev;
+                    if (jev && typeof jev === 'object') {
+                        decisions.textContent = Object.entries(jev).map(([key, value]) => {
+                            const label = jevLabels[key] || key;
+                            const text = value === true ? 'sim' : value === false ? 'não' : String(value);
+                            return `${label}: ${text}`;
+                        }).join(' · ');
+                    } else if (payload.state && payload.state.jev_error) {
+                        decisions.textContent = 'Jev sem resposta neste quadro';
                     }
                 } catch {
                     showError();

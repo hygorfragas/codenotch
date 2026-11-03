@@ -5,15 +5,26 @@ namespace Database\Seeders;
 use App\Models\Camera;
 use App\Models\Company;
 use App\Models\Employee;
-use App\Models\EmployeeAttachment;
 use App\Models\Episode;
 use App\Models\Location;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 class SnitchDemoSeeder extends Seeder
 {
     public function run(): void
+    {
+        if (Company::query()->where('name', 'Obra Norte')->exists()) {
+            return;
+        }
+
+        DB::transaction(function (): void {
+            $this->seedDemo();
+        });
+    }
+
+    private function seedDemo(): void
     {
         $company = Company::query()->create(['name' => 'Obra Norte']);
 
@@ -29,14 +40,7 @@ class SnitchDemoSeeder extends Seeder
 
         $employee = Employee::query()->create([
             'company_id' => $company->id,
-            'location_id' => $activeLocation->id,
             'name' => 'Ana Silva',
-        ]);
-
-        EmployeeAttachment::query()->create([
-            'employee_id' => $employee->id,
-            'label' => 'ASO',
-            'path' => 'anexos/aso-ana.pdf',
         ]);
 
         Camera::query()->create([
@@ -51,8 +55,7 @@ class SnitchDemoSeeder extends Seeder
             'company_id' => $company->id,
             'location_id' => $activeLocation->id,
             'employee_id' => $employee->id,
-            'type' => 'epi',
-            'subtype' => 'capacete',
+            'type' => 'missing_ppe',
             'photo' => 'data:image/svg+xml;base64,PHN2Zy8+',
             'recorded_at' => Carbon::now()->subHours(2),
             'metadata' => [],

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from typing import Any
 
 from aiohttp import web
@@ -48,27 +49,63 @@ async def camera_stream(request: web.Request) -> web.StreamResponse:
     await response.prepare(request)
 
     analyzer = _analyzer_for_camera(base_config, camera_id)
+    stop = threading.Event()
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=1)
 
-    def iterate():
-        for annotated, state in analyzer.frames(source):
-            payload = {
-                "camera_id": camera_id,
-                "image_jpeg_base64": encode_frame_jpeg(annotated),
-                "state": state,
-            }
-            yield f"event: frame\ndata: {json.dumps(payload)}\n\n".encode()
+    def produce() -> None:
+        try:
+            for annotated, state in analyzer.frames(source):
+                if stop.is_set():
+                    break
+                payload = {
+                    "camera_id": camera_id,
+                    "image_jpeg_base64": encode_frame_jpeg(annotated),
+                    "state": state,
+                }
+                chunk = f"event: frame\ndata: {json.dumps(payload)}\n\n".encode()
+                if not _put_chunk(loop, queue, chunk, stop):
+                    break
+        except Exception as exc:  # noqa: BLE001
+            err = f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n".encode()
+            _put_chunk(loop, queue, err, stop)
+        finally:
+            _put_chunk(loop, queue, None, stop)
+
+    threading.Thread(
+        target=produce,
+        name=f"snitch-camera-{camera_id}",
+        daemon=True,
+    ).start()
 
     try:
-        for chunk in iterate():
+        while True:
+            chunk = await queue.get()
+            if chunk is None:
+                break
             await response.write(chunk)
-            await asyncio.sleep(0)  # cooperativo
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        err = f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
-        await response.write(err.encode())
+    finally:
+        stop.set()
 
     return response
+
+
+def _put_chunk(
+    loop: asyncio.AbstractEventLoop,
+    queue: asyncio.Queue[bytes | None],
+    chunk: bytes | None,
+    stop: threading.Event,
+) -> bool:
+    """Enfileira um evento sem travar o loop HTTP se o cliente cair."""
+    while not stop.is_set():
+        try:
+            asyncio.run_coroutine_threadsafe(queue.put(chunk), loop).result(timeout=1)
+            return True
+        except TimeoutError:
+            continue
+        except Exception:  # noqa: BLE001
+            return False
+    return False
 
 
 def create_app(config: AnalyzeStreamConfig | None = None, stream_source: Any = None) -> web.Application:

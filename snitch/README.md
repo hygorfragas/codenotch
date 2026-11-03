@@ -39,3 +39,55 @@ php artisan test --env=testing tests/Feature/Snitch
 # Python (mock)
 cd engine && SNITCH_VISION_MOCK=1 PYTHONPATH=. python3 -m pytest tests/ -q
 ```
+
+## Docker no Mac
+
+Sobe o painel Laravel, o motor de visão e um Jev local. As imagens oficiais são multi-arquitetura: o mesmo `docker-compose.yml` vale para Apple Silicon e Intel. O banco continua SQLite (volume `snitch-data`), sem Postgres.
+
+Na raiz do repositório:
+
+```bash
+docker compose up -d --build
+docker compose ps
+docker compose down
+```
+
+`down` remove os containers e mantém o arquivo SQLite no volume.
+
+O padrão é detecção simulada (`SNITCH_VISION_MOCK=1`), sem pesos. Para a detecção real, coloque `sh17.pt` em `snitch/storage/engine/sh17.pt` (montado no motor como `/weights/sh17.pt`, variável `SH17_WEIGHTS`) e recrie só o motor. No Docker do Mac o PyTorch da imagem é CPU:
+
+```bash
+SNITCH_VISION_MOCK=0 docker compose up -d --no-deps --force-recreate snitch-engine
+```
+
+Sem esse arquivo o motor recusa a inferência real. Volte ao mock com `SNITCH_VISION_MOCK=1` na mesma linha.
+
+O clipe de teste (`/clips/demo.avi`, gerado na imagem) fica em loop no lugar da webcam, então a página ao vivo continua recebendo quadros.
+
+URLs neste Mac:
+
+- Painel: http://127.0.0.1:8000/ (redireciona para o dashboard global)
+- Dashboard global: http://127.0.0.1:8000/snitch/company/dashboard
+- Localidade com câmera (Pátio principal): http://127.0.0.1:8000/snitch/locations/2
+- Localidade sem câmera: http://127.0.0.1:8000/snitch/locations/1
+- Câmera ao vivo: http://127.0.0.1:8000/snitch/cameras/1/live/painel
+- Health do motor: http://127.0.0.1:8765/health
+- SSE do motor: http://127.0.0.1:8765/cameras/1/stream
+- Health do Jev local: http://127.0.0.1:8787/health
+
+Caixas e SSE: a página ao vivo abre `EventSource` em `/snitch/cameras/{id}/stream`. O Laravel faz proxy do motor. Cada evento `frame` traz `image_jpeg_base64` (JPEG já com as caixas) e `state`. No mock a caixa é de uma pessoa sintética, desenhada em todo quadro.
+
+O Jev deste stack é um stand-in do contrato que `engine/jev_client.py` já usa (não inventa outro protocolo):
+
+1. `POST /state` com o JSON do quadro (pessoas, EPI faltando, zonas). Não vai pixel.
+2. `POST /ask` com `{"question":"any_missing_required_ppe"}` (ou `any_person_in_restricted_zone`).
+3. Resposta: `{"answer": true}` ou `{"answer": false}`.
+
+No mock a pessoa sintética não usa EPI e a zona restrita não entra na conta, então o painel mostra **EPI obrigatório faltando: sim** e **Pessoa em zona restrita: não**.
+
+Testes, sem apagar o SQLite de demonstração:
+
+```bash
+docker compose exec snitch-web sh -lc 'touch database/testing.sqlite && php artisan test --env=testing tests/Feature/Snitch'
+docker compose exec -e SNITCH_VISION_MOCK=1 snitch-engine python -m pytest tests/ -q
+```

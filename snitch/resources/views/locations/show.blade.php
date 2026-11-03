@@ -47,7 +47,7 @@
                         <p class="text-sm font-medium text-slate-100">
                             {{ $episode->employee?->name ?? 'Sem vínculo' }}
                             <span class="text-slate-500">·</span>
-                            <span class="capitalize">{{ $episode->type }}</span>
+                            <span class="capitalize">{{ $episode->type->value }}</span>
                         </p>
                         <p class="text-xs text-slate-400">{{ $episode->recorded_at->format('d/m/Y H:i') }}</p>
                     </li>
