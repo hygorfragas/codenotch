@@ -207,11 +207,7 @@ def _publish_loop(analyzer: StreamAnalyzer, grabber: FrameGrabber, latest: dict[
             continue
         _seq, frame, _captured_at, capture_fps = snap
         overlay = analyzer.overlay_snapshot()
-        with lock:
-            inference_at = latest.get("inference_at")
-        age_ms = (time.time() - inference_at) * 1000 if inference_at else None
-        fresh = age_ms is None or age_ms <= 200
-        image = render_scene(frame, overlay) if fresh and (overlay.get("boxes") or overlay.get("zones")) else frame
+        image = render_scene(frame, overlay) if overlay.get("boxes") or overlay.get("zones") else frame
         jpeg = encode_frame_jpeg(image, quality=72)
         sent += 1
         now = time.perf_counter()

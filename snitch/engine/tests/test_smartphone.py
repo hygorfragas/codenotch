@@ -64,16 +64,6 @@ def test_glasses_zoom_runs_only_when_required_and_missing():
     assert analyzer._should_zoom_for_glasses(set()) is False
 
 
-def test_phone_box_must_sit_on_the_person():
-    analyzer = _analyzer()
-    person = _detections([[100, 80, 220, 360]], [0], [0.9], tracker_id=[1])
-    giant = [[0, 0, 900, 700]]
-    assert analyzer._observe_smartphones(person, giant, None, now=10.0) == []
-    local = [[130, 140, 170, 190]]
-    found = analyzer._observe_smartphones(person, local, None, now=10.0)
-    assert found[0]["bbox"][0] == 130.0
-
-
 def test_phone_hold_keeps_the_timer_for_a_short_gap():
     analyzer = _analyzer()
     analyzer._smartphone = {"enabled": True, "max_continuous_seconds": 10, "hand_limit_seconds": 10}

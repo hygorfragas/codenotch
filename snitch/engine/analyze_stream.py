@@ -107,42 +107,6 @@ def display_class_name(name: str) -> str:
     return DISPLAY_LABELS.get(name, name)
 
 
-def map_boxes_to_frame(
-    xyxy,
-    source_hw: tuple[int, int],
-    origin_xy: tuple[float, float],
-    crop_hw: tuple[int, int],
-    frame_hw: tuple[int, int],
-) -> list[list[float]]:
-    """Leva caixas do recorte para o quadro cheio e corta no limite da imagem.
-
-    source_hw é o tamanho da imagem que o modelo recebeu. Se ela é o recorte
-    cru, a escala é 1 e só entra a origem. Se foi redimensionada, a escala
-    desfaz esse resize antes de somar a origem. Não usa o imgsz do letterbox:
-    o Ultralytics já devolve xyxy no tamanho da imagem recebida.
-    """
-    source_h, source_w = source_hw
-    crop_h, crop_w = crop_hw
-    origin_x, origin_y = origin_xy
-    frame_h, frame_w = frame_hw
-    scale_x = crop_w / max(float(source_w), 1.0)
-    scale_y = crop_h / max(float(source_h), 1.0)
-    mapped: list[list[float]] = []
-    for raw in xyxy:
-        x1 = origin_x + float(raw[0]) * scale_x
-        y1 = origin_y + float(raw[1]) * scale_y
-        x2 = origin_x + float(raw[2]) * scale_x
-        y2 = origin_y + float(raw[3]) * scale_y
-        x1 = min(max(x1, 0.0), float(frame_w))
-        y1 = min(max(y1, 0.0), float(frame_h))
-        x2 = min(max(x2, 0.0), float(frame_w))
-        y2 = min(max(y2, 0.0), float(frame_h))
-        if x2 - x1 < 2 or y2 - y1 < 2:
-            continue
-        mapped.append([x1, y1, x2, y2])
-    return mapped
-
-
 def smartphone_record_decision(
     *,
     enabled: bool,
@@ -249,7 +213,7 @@ SMALL_PPE_CONF = 0.10
 EAR_PROTECTION_CONF = 0.35
 PHONE_CONF = 0.20
 PHONE_HOLD_SECONDS = 2.0
-PHONE_INFER_INTERVAL = 0.25
+PHONE_INFER_INTERVAL = 0.22
 PHONE_FULL_INTERVAL = 1.0
 GLASSES_ZOOM_INTERVAL = 0.4
 COCO_PHONE_CLASS = 67
@@ -740,26 +704,18 @@ class StreamAnalyzer:
         if right - left < 12 or bottom - top < 12:
             return []
         crop = frame[top:bottom, left:right]
+        resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_CUBIC)
         assert self._model is not None
-        results = self._predict(self._model, crop, conf=SMALL_PPE_CONF, imgsz=320)
+        results = self._predict(self._model, resized, conf=SMALL_PPE_CONF, imgsz=320)
         import supervision as sv
 
         detections = sv.Detections.from_ultralytics(results)
         if detections.class_id is None or len(detections) == 0:
             return []
-        crop_h, crop_w = crop.shape[:2]
-        mapped = map_boxes_to_frame(
-            detections.xyxy,
-            (crop_h, crop_w),
-            (left, top),
-            (crop_h, crop_w),
-            (height, width),
-        )
+        scale_x = (right - left) / 320
+        scale_y = (bottom - top) / 320
         found: list[tuple[list[float], int, float, str]] = []
-        crop_area = max(crop_w * crop_h, 1)
         for index, class_id in enumerate(detections.class_id):
-            if index >= len(mapped):
-                break
             label = self._class_label(int(class_id))
             confidence = float(detections.confidence[index])
             if label not in CROP_PPE_LABELS:
@@ -767,11 +723,18 @@ class StreamAnalyzer:
             minimum = EAR_PROTECTION_CONF if label == "ear_protection" else SMALL_PPE_CONF
             if confidence < minimum:
                 continue
-            box = mapped[index]
-            box_area = max(box[2] - box[0], 0) * max(box[3] - box[1], 0)
-            if box_area > crop_area * 0.65:
-                continue
-            found.append((box, int(class_id), confidence, label))
+            box = detections.xyxy[index]
+            found.append((
+                [
+                    left + float(box[0]) * scale_x,
+                    top + float(box[1]) * scale_y,
+                    left + float(box[2]) * scale_x,
+                    top + float(box[3]) * scale_y,
+                ],
+                int(class_id),
+                confidence,
+                label,
+            ))
         return found
 
     def _append_detections(self, base, rows: list[tuple[list[float], int, float]]):
@@ -899,24 +862,43 @@ class StreamAnalyzer:
             })
         return found
 
+    def _phone_roi(self, people, parts, width: int, height: int) -> tuple[int, int, int, int] | None:
+        boxes = []
+        if people is not None and len(people):
+            boxes.extend(people.xyxy)
+        if parts is not None and parts.class_id is not None:
+            for index, class_id in enumerate(parts.class_id):
+                if self._class_label(int(class_id)) == "hand":
+                    boxes.append(parts.xyxy[index])
+        if not boxes:
+            return None
+        stacked = np.vstack(boxes)
+        x1 = max(0, int(np.min(stacked[:, 0])) - 48)
+        y1 = max(0, int(np.min(stacked[:, 1])) - 48)
+        x2 = min(width, int(np.max(stacked[:, 2])) + 48)
+        y2 = min(height, int(np.max(stacked[:, 3])) + 48)
+        if x2 - x1 < 32 or y2 - y1 < 32:
+            return None
+        return x1, y1, x2, y2
+
     def _detect_phones(self, frame: np.ndarray, people, parts) -> list[dict[str, Any]]:
-        """Celular no quadro inteiro. O recorte esticado devolvia caixa do tamanho da pessoa."""
-        del people, parts
         if self._coco is None:
             return []
-        result = self._predict(self._coco, frame, conf=PHONE_CONF, imgsz=320, classes=[COCO_PHONE_CLASS])
         height, width = frame.shape[:2]
-        boxes = self._read_phone_result(result)
-        frame_area = max(width * height, 1)
-        kept = []
-        for item in boxes:
-            box = item["bbox"]
-            area = max(box[2] - box[0], 0) * max(box[3] - box[1], 0)
-            if area > frame_area * 0.12:
-                continue
-            kept.append(item)
-        self._last_full_phone = time.time()
-        return kept
+        roi = self._phone_roi(people, parts, width, height)
+        now = time.time()
+        found: list[dict[str, Any]] = []
+        if roi is not None:
+            x1, y1, x2, y2 = roi
+            crop = frame[y1:y2, x1:x2]
+            resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_LINEAR)
+            result = self._predict(self._coco, resized, conf=PHONE_CONF, imgsz=320, classes=[COCO_PHONE_CLASS])
+            found = self._read_phone_result(result, x1, y1, (x2 - x1) / 320, (y2 - y1) / 320)
+        if not found and now - self._last_full_phone >= PHONE_FULL_INTERVAL:
+            result = self._predict(self._coco, frame, conf=PHONE_CONF, imgsz=416, classes=[COCO_PHONE_CLASS])
+            found = self._read_phone_result(result)
+            self._last_full_phone = now
+        return found
 
     def _phone_boxes_for_frame(self, frame: np.ndarray, people, parts, now: float) -> list[dict[str, Any]]:
         if self._coco is None:
@@ -930,34 +912,21 @@ class StreamAnalyzer:
             self._cached_phones = []
         return list(self._cached_phones)
 
-    def _box_area(self, box) -> float:
-        return max(float(box[2]) - float(box[0]), 0.0) * max(float(box[3]) - float(box[1]), 0.0)
-
-    def _intersection_ratio(self, inner, outer) -> float:
-        area = self._box_area(inner)
-        if area <= 0:
-            return 0.0
-        x1 = max(float(inner[0]), float(outer[0]))
-        y1 = max(float(inner[1]), float(outer[1]))
-        x2 = min(float(inner[2]), float(outer[2]))
-        y2 = min(float(inner[3]), float(outer[3]))
-        overlap = max(x2 - x1, 0.0) * max(y2 - y1, 0.0)
-        return overlap / area
-
     def _phone_near_person(self, phone: list[float], person_box: np.ndarray, parts) -> bool:
-        if self._box_area(phone) > self._box_area(person_box):
-            return False
-        if self._intersection_ratio(phone, person_box) >= 0.3:
+        expanded = np.array([
+            float(person_box[0]) - 40,
+            float(person_box[1]) - 40,
+            float(person_box[2]) + 40,
+            float(person_box[3]) + 40,
+        ], dtype=np.float32)
+        if self._center_inside(np.array(phone), expanded):
             return True
         if parts is None or parts.class_id is None:
             return False
         for index, class_id in enumerate(parts.class_id):
             if self._class_label(int(class_id)) != "hand":
                 continue
-            hand = parts.xyxy[index]
-            if self._intersection_ratio(hand, person_box) < 0.3:
-                continue
-            if self._intersection_ratio(phone, hand) >= 0.3:
+            if self._center_inside(np.array(phone), parts.xyxy[index]) and self._center_inside(parts.xyxy[index], expanded):
                 return True
         return False
 
