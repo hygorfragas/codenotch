@@ -27,6 +27,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from jev_client import ask_jev_sync
+from jev_metrics import jev_metrics
 from phone_watch import PhoneClock, PhoneSighting, phone_near_body
 from state_builder import TrackedPerson, build_jev_state
 
@@ -1478,6 +1479,7 @@ class StreamAnalyzer:
         ).start()
 
     def _phone_use_background(self, tracker_id: int, payload: dict[str, Any]) -> None:
+        started = time.perf_counter()
         try:
             url = self.config.jev_url.rstrip("/") + "/ask"
             request = urllib.request.Request(
@@ -1486,9 +1488,27 @@ class StreamAnalyzer:
                 headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(request, timeout=5) as response:
-                body = json.loads(response.read().decode())
-            self._phone_use[tracker_id] = isinstance(body, dict) and body.get("answer") is True
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+                raw = response.read()
+                body = json.loads(raw.decode())
+            decision = body.get("answer") if isinstance(body, dict) else None
+            jev_metrics.record(
+                endpoint="/ask",
+                trigger="smartphone_in_use",
+                payload_bytes=len(request.data or b""),
+                latency_ms=(time.perf_counter() - started) * 1000,
+                status=str(getattr(response, "status", 200)),
+                decision=json.dumps(decision, ensure_ascii=False),
+            )
+            self._phone_use[tracker_id] = decision is True
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            jev_metrics.record(
+                endpoint="/ask",
+                trigger="smartphone_in_use",
+                payload_bytes=len(json.dumps(payload).encode()),
+                latency_ms=(time.perf_counter() - started) * 1000,
+                status="timeout" if isinstance(exc, TimeoutError) else "error",
+                decision=None,
+            )
             return
         finally:
             self._phone_ask_inflight = False
@@ -1569,6 +1589,7 @@ class StreamAnalyzer:
                 "jev_latency_ms": self._last_jev_latency_ms,
                 "laya_engine": self._laya_engine,
                 "inference_fps": self._inference_fps,
+                **jev_metrics.snapshot(),
             }
 
     def _schedule_jev(self, state: dict[str, Any], persons: list[TrackedPerson]) -> None:
@@ -1622,12 +1643,29 @@ class StreamAnalyzer:
 
     def _read_laya_engine(self) -> str | None:
         url = self.config.jev_url.rstrip("/") + "/health"
+        started = time.perf_counter()
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
                 body = json.loads(response.read().decode())
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            jev_metrics.record(
+                endpoint="/health",
+                trigger="nome_do_motor",
+                payload_bytes=0,
+                latency_ms=(time.perf_counter() - started) * 1000,
+                status="timeout" if isinstance(exc, TimeoutError) else "error",
+                decision=None,
+            )
             return None
         engine = body.get("engine") if isinstance(body, dict) else None
+        jev_metrics.record(
+            endpoint="/health",
+            trigger="nome_do_motor",
+            payload_bytes=0,
+            latency_ms=(time.perf_counter() - started) * 1000,
+            status="200",
+            decision=str(engine) if engine else None,
+        )
         return str(engine) if engine else None
 
     def _maybe_record_episode(self, annotated: np.ndarray, state: dict[str, Any]) -> None:

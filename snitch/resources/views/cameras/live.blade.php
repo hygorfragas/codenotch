@@ -135,7 +135,10 @@
                         const latency = info.jev_latency_ms == null ? '—' : `${Math.round(info.jev_latency_ms)} ms`;
                         const updated = info.jev_updated_at ? new Date(info.jev_updated_at * 1000).toLocaleTimeString() : '—';
                         const infer = info.inference_fps == null ? '—' : `${info.inference_fps} FPS`;
-                        telemetry.textContent = `FPS ${info.fps ?? localFps} · Inferência ${infer} · Memória: último quadro (sem acúmulo) · Laya ${laya} · ${latency} · atualizado ${updated}`;
+                        const p50 = info.laya_p50_ms == null ? '—' : `${Math.round(info.laya_p50_ms)} ms`;
+                        const p95 = info.laya_p95_ms == null ? '—' : `${Math.round(info.laya_p95_ms)} ms`;
+                        const errors = info.laya_error_rate == null ? '—' : `${Math.round(info.laya_error_rate * 100)}%`;
+                        telemetry.textContent = `FPS ${info.fps ?? localFps} · Inferência ${infer} · Memória: último quadro (sem acúmulo) · Laya ${laya} · ${latency} · p50 ${p50} · p95 ${p95} · erro ${errors} · atualizado ${updated}`;
                         lastFrameAt = now;
                     }
                     const jev = payload.state && payload.state.jev;
