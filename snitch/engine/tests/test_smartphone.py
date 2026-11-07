@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 from pathlib import Path
@@ -55,12 +54,12 @@ def test_ear_protection_needs_a_higher_confidence_than_glasses():
 
 def test_glasses_zoom_runs_only_when_required_and_missing():
     analyzer = _analyzer(required_ppe=("helmet",))
+    analyzer._frame_index = 0
     assert analyzer._should_zoom_for_glasses(set()) is False
     analyzer.config.required_ppe = ("goggles",)
-    analyzer._roi_at[-1] = 0.0
     assert analyzer._should_zoom_for_glasses(set()) is True
     assert analyzer._should_zoom_for_glasses({"goggles"}) is False
-    analyzer._roi_at[-1] = __import__("time").time()
+    analyzer._frame_index = 1
     assert analyzer._should_zoom_for_glasses(set()) is False
 
 
@@ -78,7 +77,7 @@ def test_phone_hold_keeps_the_timer_for_a_short_gap():
     assert gone == []
 
 
-def test_phone_episode_waits_for_laya_and_falls_back_slowly(monkeypatch):
+def test_phone_episode_posts_after_the_configured_limit(monkeypatch):
     posts = []
     monkeypatch.setenv("SNITCH_WEB_URL", "http://panel.test")
     monkeypatch.setenv("SNITCH_EPISODE_SYNC", "1")
@@ -86,53 +85,18 @@ def test_phone_episode_waits_for_laya_and_falls_back_slowly(monkeypatch):
     analyzer = _analyzer()
     analyzer._smartphone = {"enabled": True, "max_continuous_seconds": 15, "hand_limit_seconds": 15}
     frame = np.zeros((16, 16, 3), dtype=np.uint8)
-    phone = {
-        "tracker_id": 1,
-        "active": True,
-        "seconds": 16,
-        "limit": 15,
-        "exceeded": True,
-        "employee_id": None,
-        "confidence": 0.4,
-        "hands_overlap": True,
-        "near_face": False,
-        "near_ear": True,
-        "in_front_of_face": False,
-        "recent_hits": 3,
-    }
     analyzer._maybe_record_episode(frame, {
-        "smartphones": [phone],
-        "laya_phone": {"available": True, "confirmed": False},
+        "smartphones": [{
+            "tracker_id": 1,
+            "active": True,
+            "seconds": 16,
+            "limit": 15,
+            "exceeded": True,
+            "employee_id": None,
+        }],
     })
-    assert posts == []
-    analyzer._maybe_record_episode(frame, {
-        "camera_id": 1,
-        "frame_index": 4,
-        "required_ppe": ["goggles"],
-        "persons": [{"tracker_id": 1, "in_zones": [], "ppe_missing": ["goggles"]}],
-        "smartphone": {"enabled": True, "max_continuous_seconds": 15},
-        "smartphones": [dict(phone, seconds=16)],
-        "laya_phone": {"available": True, "confirmed": True},
-    })
-    phone_posts = [item for item in posts if item[0].endswith("/snitch/episodes/smartphone")]
-    assert phone_posts[0][1]["decision_source"] == "laya"
-    assert phone_posts[0][1]["laya_confirmed"] is True
-    from analyze_stream import compact_laya_payload
-
-    compact = compact_laya_payload({
-        "camera_id": 1,
-        "frame_index": 4,
-        "required_ppe": ["goggles"],
-        "persons": [{"tracker_id": 1, "in_zones": [], "ppe_missing": ["goggles"]}],
-        "smartphone": {"enabled": True, "max_continuous_seconds": 15},
-        "smartphones": [phone],
-    })
-    assert "image" not in json.dumps(compact)
-    assert compact["persons"][0]["smartphone"]["near_ear"] is True
-    assert compact["smartphone_policy"]["max_continuous_seconds"] == 15
-    analyzer._maybe_record_episode(frame, {
-        "smartphones": [dict(phone, seconds=21, tracker_id=2)],
-        "laya_phone": {"available": False, "confirmed": None},
-    })
-    fallback = [item for item in posts if item[1].get("decision_source") == "fallback_local"]
-    assert fallback[-1][1]["smartphone_seconds"] == 21
+    assert posts[0][0].endswith("/snitch/episodes/smartphone")
+    assert posts[0][1]["enabled"] is True
+    assert posts[0][1]["limit_exceeded"] is True
+    assert posts[0][1]["smartphone_seconds"] == 16
+    assert posts[0][1]["max_continuous_seconds"] == 15

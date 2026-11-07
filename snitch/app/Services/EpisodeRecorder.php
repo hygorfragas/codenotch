@@ -153,8 +153,6 @@ class EpisodeRecorder
                 'tracker_id' => isset($payload['tracker_id']) && is_numeric($payload['tracker_id'])
                     ? (int) $payload['tracker_id']
                     : null,
-                'decision_source' => $payload['decision_source'] ?? null,
-                'laya_confirmed' => array_key_exists('laya_confirmed', $payload) ? (bool) $payload['laya_confirmed'] : null,
             ],
             photo: $payload['photo'] ?? null,
             cameraId: $this->nullableForeignId($payload['camera_id'] ?? null),

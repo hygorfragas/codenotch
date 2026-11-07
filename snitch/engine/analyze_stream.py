@@ -107,103 +107,6 @@ def display_class_name(name: str) -> str:
     return DISPLAY_LABELS.get(name, name)
 
 
-def smartphone_record_decision(
-    *,
-    enabled: bool,
-    seconds: int,
-    limit: int | None,
-    laya_confirmed: bool | None,
-    laya_available: bool,
-) -> tuple[bool, str]:
-    """A Laya confirma o uso. Sem ela, só um fallback mais longo registra o episódio."""
-    if not enabled or limit is None or seconds < limit:
-        return False, "abaixo_do_limite"
-    if laya_available and laya_confirmed is True:
-        return True, "laya"
-    if laya_available and laya_confirmed is not True:
-        return False, "laya_nao_confirmou"
-    if seconds >= limit + 5:
-        return True, "fallback_local"
-    return False, "laya_indisponivel"
-
-
-def compact_laya_payload(state: dict[str, Any]) -> dict[str, Any]:
-    """Estado curto para a Laya: sem imagem e sem caixas de EPI repetidas."""
-    policy = state.get("smartphone") if isinstance(state.get("smartphone"), dict) else {}
-    phones = {
-        int(item["tracker_id"]): item
-        for item in (state.get("smartphones") or [])
-        if isinstance(item, dict) and item.get("tracker_id") is not None
-    }
-    persons = []
-    for person in state.get("persons") or []:
-        if not isinstance(person, dict):
-            continue
-        tracker_id = int(person.get("tracker_id") or 0)
-        phone = phones.get(tracker_id) or {}
-        persons.append({
-            "tracker_id": tracker_id,
-            "in_zones": list(person.get("in_zones") or []),
-            "ppe_missing": list(person.get("ppe_missing") or []),
-            "employee_id": phone.get("employee_id"),
-            "smartphone": {
-                "smartphone_detected": bool(phone.get("active")),
-                "confidence": phone.get("confidence"),
-                "continuous_seconds": int(phone.get("seconds") or 0),
-                "bbox": phone.get("bbox"),
-                "hands_overlap": bool(phone.get("hands_overlap")),
-                "near_face": bool(phone.get("near_face")),
-                "near_ear": bool(phone.get("near_ear")),
-                "in_front_of_face": bool(phone.get("in_front_of_face")),
-                "recent_hits": int(phone.get("recent_hits") or 0),
-            },
-        })
-    zones = []
-    for zone in state.get("zone_dwell") or state.get("zones") or []:
-        if not isinstance(zone, dict):
-            continue
-        zones.append({
-            "name": zone.get("name"),
-            "type": zone.get("type"),
-            "elapsed_s": zone.get("elapsed_s"),
-            "exceeded": zone.get("exceeded"),
-        })
-    return {
-        "camera_id": state.get("camera_id"),
-        "frame_index": state.get("frame_index"),
-        "required_ppe": list(state.get("required_ppe") or []),
-        "zones": zones,
-        "persons": persons,
-        "smartphone_policy": {
-            "enabled": bool(policy.get("enabled")),
-            "max_continuous_seconds": policy.get("max_continuous_seconds", policy.get("hand_limit_seconds")),
-        },
-    }
-
-
-def render_scene(frame: np.ndarray, overlay: dict[str, Any]) -> np.ndarray:
-    """Desenha o último resultado em qualquer quadro novo, sem rodar o modelo de novo."""
-    image = frame.copy()
-    labels: list[tuple[str, int, int, tuple[int, int, int], tuple[float, float, float, float]]] = []
-    for item in overlay.get("boxes") or []:
-        x1, y1, x2, y2 = (float(value) for value in item["xyxy"])
-        color = tuple(int(channel) for channel in item["color"])
-        cv2.rectangle(image, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-        labels.append((str(item.get("label") or ""), int(x1), max(0, int(y1) - 22), color, (x1, y1, x2, y2)))
-    if labels:
-        image = draw_unicode_labels(image, layout_detection_labels(labels))
-    zone_labels: list[tuple[str, int, int, tuple[int, int, int]]] = []
-    for zone in overlay.get("zones") or []:
-        polygon = np.array(zone["polygon"], dtype=np.int32)
-        color = tuple(int(channel) for channel in zone["color"])
-        cv2.polylines(image, [polygon], isClosed=True, color=color, thickness=2)
-        if zone.get("label"):
-            zone_labels.append((str(zone["label"]), int(polygon[0][0]), max(0, int(polygon[0][1]) - 22), color))
-    if zone_labels:
-        image = draw_unicode_labels(image, zone_labels)
-    return image
-
-
 DWELL_GRACE_SECONDS = 4.5
 DWELL_REID_PIXELS = 220.0
 ZONE_MIN_OVERLAP = 0.15
@@ -212,10 +115,7 @@ STRONG_CLASS_CONF = 0.25
 SMALL_PPE_CONF = 0.10
 EAR_PROTECTION_CONF = 0.35
 PHONE_CONF = 0.20
-PHONE_HOLD_SECONDS = 2.0
-PHONE_INFER_INTERVAL = 0.22
-PHONE_FULL_INTERVAL = 1.0
-GLASSES_ZOOM_INTERVAL = 0.4
+PHONE_HOLD_SECONDS = 1.5
 COCO_PHONE_CLASS = 67
 PPE_MEMORY_SECONDS = 2.2
 SMALL_PPE_LABELS = frozenset({"goggles", "mask", "gloves", "face-guard"})
@@ -427,7 +327,6 @@ class AnalyzeStreamConfig:
         "any_missing_required_ppe",
         "any_person_in_restricted_zone",
         "any_smartphone_idle",
-        "any_person_using_smartphone",
     )
 
 
@@ -461,17 +360,6 @@ class StreamAnalyzer:
         self._phone_since: dict[int, float] = {}
         self._phone_hold: dict[int, float] = {}
         self._phone_boxes: dict[int, list[float]] = {}
-        self._phone_confidence: dict[int, float | None] = {}
-        self._phone_history: dict[int, list[float]] = {}
-        self._last_phone_infer = 0.0
-        self._last_full_phone = 0.0
-        self._imgsz = int(os.environ.get("SNITCH_YOLO_IMGSZ", "640") or "640")
-        self._half = False
-        self._overlay: dict[str, Any] = {"boxes": [], "zones": []}
-        self._overlay_lock = threading.Lock()
-        self._laya_signature_value = ""
-        self._laya_latency_samples: list[float] = []
-        self._health_at = 0.0
         self._config_lock = threading.Lock()
         self._config_inflight = False
         self._config_ts = 0.0
@@ -498,12 +386,7 @@ class StreamAnalyzer:
             except Exception:  # noqa: BLE001
                 self._device = "cpu"
                 self._model.to(self._device)
-            self._half = self._device == "mps" and os.environ.get("SNITCH_YOLO_HALF", "1").lower() not in {"0", "false", "off"}
-            print(
-                f"SH17 {weights} device={self._device} imgsz={self._imgsz} half={self._half}",
-                file=sys.stderr,
-                flush=True,
-            )
+            print(f"SH17 {weights} device={self._device}", file=sys.stderr, flush=True)
             coco_path = self._coco_weights_path(Path(weights))
             if coco_path is not None:
                 self._coco = YOLO(str(coco_path))
@@ -514,8 +397,6 @@ class StreamAnalyzer:
                 print(f"COCO celular {coco_path} device={self._device}", file=sys.stderr, flush=True)
             else:
                 print("COCO ausente: celular não será detectado.", file=sys.stderr, flush=True)
-            import logging
-            logging.getLogger("ultralytics").setLevel(logging.ERROR)
             for zone in config.zones:
                 self._polygon_zones.append(
                     (zone.name, sv.PolygonZone(polygon=zone.polygon))
@@ -541,31 +422,10 @@ class StreamAnalyzer:
             return self._mock_detections(frame)
 
         assert self._model is not None
-        results = self._predict(self._model, frame, conf=YOLO_BASE_CONF, imgsz=self._imgsz)
+        results = self._model(frame, verbose=False, conf=YOLO_BASE_CONF, imgsz=640, device=self._device)[0]
         import supervision as sv
 
         return self._filter_by_class_confidence(sv.Detections.from_ultralytics(results))
-
-    def _predict(self, model: Any, image: np.ndarray, **kwargs: Any):
-        import torch
-
-        import warnings
-
-        kwargs.setdefault("verbose", False)
-        kwargs.setdefault("device", self._device)
-        if self._half:
-            kwargs["half"] = True
-        try:
-            with warnings.catch_warnings(), torch.inference_mode():
-                warnings.filterwarnings("ignore", message=".*half.*")
-                return model(image, **kwargs)[0]
-        except Exception:
-            if not kwargs.get("half"):
-                raise
-            self._half = False
-            kwargs.pop("half", None)
-            with torch.inference_mode():
-                return model(image, **kwargs)[0]
 
     def _keep_detection(self, label: str, confidence: float, box: np.ndarray, anchors: list[np.ndarray]) -> bool:
         if label in {"person", "head", "face"}:
@@ -704,16 +564,16 @@ class StreamAnalyzer:
         if right - left < 12 or bottom - top < 12:
             return []
         crop = frame[top:bottom, left:right]
-        resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_CUBIC)
+        resized = cv2.resize(crop, (416, 416), interpolation=cv2.INTER_CUBIC)
         assert self._model is not None
-        results = self._predict(self._model, resized, conf=SMALL_PPE_CONF, imgsz=320)
+        results = self._model(resized, verbose=False, conf=SMALL_PPE_CONF, imgsz=416, device=self._device)[0]
         import supervision as sv
 
         detections = sv.Detections.from_ultralytics(results)
         if detections.class_id is None or len(detections) == 0:
             return []
-        scale_x = (right - left) / 320
-        scale_y = (bottom - top) / 320
+        scale_x = (right - left) / 416
+        scale_y = (bottom - top) / 416
         found: list[tuple[list[float], int, float, str]] = []
         for index, class_id in enumerate(detections.class_id):
             label = self._class_label(int(class_id))
@@ -771,7 +631,6 @@ class StreamAnalyzer:
             present = self._labels_inside(person_box, parts)
             if self._should_zoom_for_glasses(present) and crops < 1:
                 self._roi_at[tid] = now
-                self._roi_at[-1] = now
                 crops += 1
                 for box, class_id, confidence, label in self._infer_crop(frame, anchor):
                     added.append((box, class_id, confidence))
@@ -809,8 +668,7 @@ class StreamAnalyzer:
             return False
         if "goggles" in present:
             return False
-        last = self._roi_at.get(-1, 0.0)
-        return (time.time() - last) >= GLASSES_ZOOM_INTERVAL
+        return self._frame_index % 3 == 0
 
     def _coco_weights_path(self, sh17: Path) -> Path | None:
         configured = os.environ.get("SNITCH_COCO_WEIGHTS", "").strip()
@@ -840,77 +698,34 @@ class StreamAnalyzer:
             return None
         return value if value > 0 else None
 
-    def _read_phone_result(self, result: Any, offset_x: float = 0.0, offset_y: float = 0.0, scale_x: float = 1.0, scale_y: float = 1.0) -> list[dict[str, Any]]:
-        boxes = result.boxes
+    def _detect_phones(self, frame: np.ndarray) -> list[list[float]]:
+        if self._coco is None:
+            return []
+        results = self._coco.predict(
+            frame,
+            classes=[COCO_PHONE_CLASS],
+            conf=PHONE_CONF,
+            imgsz=640,
+            verbose=False,
+            device=self._device,
+        )
+        boxes = results[0].boxes
         if boxes is None or len(boxes) == 0:
             return []
         xyxy = boxes.xyxy
-        confidences = boxes.conf
         if hasattr(xyxy, "cpu"):
             xyxy = xyxy.cpu().numpy()
-            confidences = confidences.cpu().numpy()
-        found = []
-        for box, confidence in zip(xyxy, confidences):
-            found.append({
-                "bbox": [
-                    offset_x + float(box[0]) * scale_x,
-                    offset_y + float(box[1]) * scale_y,
-                    offset_x + float(box[2]) * scale_x,
-                    offset_y + float(box[3]) * scale_y,
-                ],
-                "confidence": round(float(confidence), 3),
-            })
-        return found
+        return [[float(value) for value in box] for box in xyxy]
 
-    def _phone_roi(self, people, parts, width: int, height: int) -> tuple[int, int, int, int] | None:
-        boxes = []
-        if people is not None and len(people):
-            boxes.extend(people.xyxy)
-        if parts is not None and parts.class_id is not None:
-            for index, class_id in enumerate(parts.class_id):
-                if self._class_label(int(class_id)) == "hand":
-                    boxes.append(parts.xyxy[index])
-        if not boxes:
-            return None
-        stacked = np.vstack(boxes)
-        x1 = max(0, int(np.min(stacked[:, 0])) - 48)
-        y1 = max(0, int(np.min(stacked[:, 1])) - 48)
-        x2 = min(width, int(np.max(stacked[:, 2])) + 48)
-        y2 = min(height, int(np.max(stacked[:, 3])) + 48)
-        if x2 - x1 < 32 or y2 - y1 < 32:
-            return None
-        return x1, y1, x2, y2
-
-    def _detect_phones(self, frame: np.ndarray, people, parts) -> list[dict[str, Any]]:
+    def _phone_boxes_for_frame(self, frame: np.ndarray, now: float) -> list[list[float]]:
         if self._coco is None:
             return []
-        height, width = frame.shape[:2]
-        roi = self._phone_roi(people, parts, width, height)
-        now = time.time()
-        found: list[dict[str, Any]] = []
-        if roi is not None:
-            x1, y1, x2, y2 = roi
-            crop = frame[y1:y2, x1:x2]
-            resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_LINEAR)
-            result = self._predict(self._coco, resized, conf=PHONE_CONF, imgsz=320, classes=[COCO_PHONE_CLASS])
-            found = self._read_phone_result(result, x1, y1, (x2 - x1) / 320, (y2 - y1) / 320)
-        if not found and now - self._last_full_phone >= PHONE_FULL_INTERVAL:
-            result = self._predict(self._coco, frame, conf=PHONE_CONF, imgsz=416, classes=[COCO_PHONE_CLASS])
-            found = self._read_phone_result(result)
-            self._last_full_phone = now
-        return found
-
-    def _phone_boxes_for_frame(self, frame: np.ndarray, people, parts, now: float) -> list[dict[str, Any]]:
-        if self._coco is None:
-            return []
-        due = (now - self._last_phone_infer) >= PHONE_INFER_INTERVAL
-        if due:
-            self._cached_phones = self._detect_phones(frame, people, parts)
+        if self._frame_index % 2 == 0 or not self._cached_phones:
+            self._cached_phones = self._detect_phones(frame)
             self._cached_phones_at = now
-            self._last_phone_infer = now
         elif now - self._cached_phones_at > PHONE_HOLD_SECONDS:
             self._cached_phones = []
-        return list(self._cached_phones)
+        return self._cached_phones
 
     def _phone_near_person(self, phone: list[float], person_box: np.ndarray, parts) -> bool:
         expanded = np.array([
@@ -930,66 +745,7 @@ class StreamAnalyzer:
                 return True
         return False
 
-    def _match_phone(self, phone_boxes: list[Any], person_box: np.ndarray, parts) -> tuple[list[float] | None, float | None]:
-        for item in phone_boxes:
-            if isinstance(item, dict):
-                box = [float(value) for value in item["bbox"]]
-                confidence = item.get("confidence")
-            else:
-                box = [float(value) for value in item]
-                confidence = None
-            if self._phone_near_person(box, person_box, parts):
-                return box, None if confidence is None else float(confidence)
-        return None, None
-
-    def _phone_geometry(self, phone: list[float], person_box: np.ndarray, parts) -> dict[str, bool]:
-        hands_overlap = False
-        near_face = False
-        near_ear = False
-        in_front = False
-        phone_array = np.array(phone, dtype=np.float32)
-        if parts is not None and parts.class_id is not None:
-            for index, class_id in enumerate(parts.class_id):
-                label = self._class_label(int(class_id))
-                box = parts.xyxy[index]
-                if label == "hand" and (
-                    self._center_inside(phone_array, box) or self._center_inside(box, phone_array)
-                ):
-                    hands_overlap = True
-                if label == "face":
-                    if self._center_inside(phone_array, box):
-                        in_front = True
-                        near_face = True
-                    elif self._center_distance(phone_array, box) <= max(48.0, float(box[3] - box[1]) * 1.3):
-                        near_face = True
-                if label == "head":
-                    hx1, hy1, hx2, hy2 = (float(value) for value in box)
-                    pcx = (phone[0] + phone[2]) / 2
-                    pcy = (phone[1] + phone[3]) / 2
-                    width = max(hx2 - hx1, 1.0)
-                    side = pcx <= hx1 + width * 0.22 or pcx >= hx2 - width * 0.22
-                    if side and hy1 <= pcy <= hy1 + (hy2 - hy1) * 0.6:
-                        near_ear = True
-        if not near_face and self._center_inside(phone_array, person_box):
-            x1, y1, x2, y2 = (float(value) for value in person_box)
-            pcy = (phone[1] + phone[3]) / 2
-            if pcy <= y1 + (y2 - y1) * 0.45:
-                near_face = True
-        return {
-            "hands_overlap": hands_overlap,
-            "near_face": near_face,
-            "near_ear": near_ear,
-            "in_front_of_face": in_front,
-        }
-
-    def _center_distance(self, left: np.ndarray, right: np.ndarray) -> float:
-        lx = (float(left[0]) + float(left[2])) / 2
-        ly = (float(left[1]) + float(left[3])) / 2
-        rx = (float(right[0]) + float(right[2])) / 2
-        ry = (float(right[1]) + float(right[3])) / 2
-        return math.hypot(lx - rx, ly - ry)
-
-    def _observe_smartphones(self, people, phone_boxes: list[Any], parts, now: float) -> list[dict[str, Any]]:
+    def _observe_smartphones(self, people, phone_boxes: list[list[float]], parts, now: float) -> list[dict[str, Any]]:
         if people.tracker_id is None or len(people) == 0:
             return []
         limit = self._phone_limit()
@@ -1000,41 +756,30 @@ class StreamAnalyzer:
                 continue
             tid = int(tracker_id)
             person_box = people.xyxy[index]
-            matched, confidence = self._match_phone(phone_boxes, person_box, parts)
+            matched = next((box for box in phone_boxes if self._phone_near_person(box, person_box, parts)), None)
             if matched is not None:
                 self._phone_hold[tid] = now
                 self._phone_boxes[tid] = matched
-                self._phone_confidence[tid] = confidence
                 self._phone_since.setdefault(tid, now)
-                self._phone_history.setdefault(tid, []).append(now)
             elif tid in self._phone_hold and now - self._phone_hold[tid] <= PHONE_HOLD_SECONDS:
                 matched = self._phone_boxes.get(tid)
-                confidence = self._phone_confidence.get(tid)
             else:
                 self._phone_since.pop(tid, None)
                 self._phone_hold.pop(tid, None)
                 self._phone_boxes.pop(tid, None)
-                self._phone_confidence.pop(tid, None)
-                self._phone_history.pop(tid, None)
                 continue
             if matched is None or tid not in self._phone_since:
                 continue
             seen.add(tid)
-            history = [stamp for stamp in self._phone_history.get(tid, []) if now - stamp <= PHONE_HOLD_SECONDS]
-            self._phone_history[tid] = history
             seconds = max(0, int(now - self._phone_since[tid]))
-            geometry = self._phone_geometry(matched, person_box, parts)
             statuses.append({
                 "tracker_id": tid,
                 "active": True,
                 "seconds": seconds,
                 "limit": limit,
                 "exceeded": bool(limit is not None and seconds >= limit),
-                "bbox": [round(float(value), 1) for value in matched],
-                "confidence": confidence,
+                "bbox": [float(value) for value in matched],
                 "employee_id": self._employee_id_for_tracker(tid),
-                "recent_hits": len(history),
-                **geometry,
             })
         stale = [tracker for tracker in self._phone_since if tracker not in seen]
         for tracker in stale:
@@ -1042,8 +787,6 @@ class StreamAnalyzer:
                 self._phone_since.pop(tracker, None)
                 self._phone_hold.pop(tracker, None)
                 self._phone_boxes.pop(tracker, None)
-                self._phone_confidence.pop(tracker, None)
-                self._phone_history.pop(tracker, None)
         return statuses
 
     def _draw_phones(self, frame: np.ndarray, phones: list[dict[str, Any]]) -> np.ndarray:
@@ -1404,7 +1147,7 @@ class StreamAnalyzer:
                 found.append(label)
         return found
 
-    def process_frame(self, frame: np.ndarray, *, render: bool = True) -> tuple[np.ndarray, dict[str, Any]]:
+    def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
         detect_started = time.perf_counter()
         people, parts = self._track_people_only(self._run_yolo(frame))
         phones: list[dict[str, Any]] = []
@@ -1412,7 +1155,7 @@ class StreamAnalyzer:
             parts = self._refine_facial_ppe(frame, people, parts)
             phones = self._observe_smartphones(
                 people,
-                self._phone_boxes_for_frame(frame, people, parts, time.time()),
+                self._phone_boxes_for_frame(frame, time.time()),
                 parts,
                 time.time(),
             )
@@ -1438,80 +1181,24 @@ class StreamAnalyzer:
         state["dwell_exceeded"] = dwell_exceeded
         state["zone_dwell"] = zone_dwell
         self._attach_missing_ppe(state)
-        self._attach_laya_phone(state)
         self._attach_jev(state, persons)
         missing_labels = {
             int(person["tracker_id"]): list(person.get("missing_ppe_labels_pt") or [])
             for person in state["persons"]
             if person.get("missing_ppe_labels_pt")
         }
-        overlay = self._collect_overlay(people, parts, phones, zone_dwell, frame.shape[1], frame.shape[0], missing_labels)
-        self._store_overlay(overlay)
-        annotated = render_scene(frame, overlay) if render else frame
+        annotated = self._annotate(frame, people, missing_labels)
+        if len(parts):
+            annotated = self._annotate(annotated, parts)
+        annotated = self._draw_phones(annotated, phones)
+        annotated = self._draw_zones(annotated, zone_dwell)
         telemetry = dict(state.get("telemetry") or {})
         telemetry["inference_fps"] = self._inference_fps
-        telemetry["imgsz"] = self._imgsz
-        telemetry["device"] = self._device
         state["telemetry"] = telemetry
         if persons and not self.config.mock:
-            self._maybe_record_episode(frame, state)
+            self._maybe_record_episode(annotated, state)
         self._frame_index += 1
         return annotated, state
-
-    def _store_overlay(self, overlay: dict[str, Any]) -> None:
-        with self._overlay_lock:
-            self._overlay = overlay
-
-    def overlay_snapshot(self) -> dict[str, Any]:
-        with self._overlay_lock:
-            return self._overlay
-
-    def _collect_overlay(self, people, parts, phones, zone_dwell, width, height, missing_labels) -> dict[str, Any]:
-        boxes = self._detection_overlay(people, missing_labels, (80, 220, 80))
-        boxes.extend(self._detection_overlay(parts, None, (80, 180, 255)))
-        for phone in phones:
-            if not phone.get("active"):
-                continue
-            limit = phone.get("limit")
-            text = f"Celular · {int(phone['seconds'])}s"
-            if limit:
-                text = f"{text} / {int(limit)}s"
-            boxes.append({"xyxy": phone["bbox"], "label": text, "color": (255, 0, 255)})
-        zones = []
-        by_name = {str(item["name"]): item for item in zone_dwell}
-        for zone in self.config.zones:
-            info = by_name.get(zone.name, {})
-            polygon = self._polygon_pixels(zone.polygon, width, height).astype(int).tolist()
-            if info.get("exceeded") or (zone.zone_type in {"restrita", "risk"} and info.get("occupied")):
-                color = (40, 40, 220)
-            elif info.get("occupied"):
-                color = (0, 180, 255)
-            else:
-                color = (80, 180, 80)
-            zones.append({
-                "polygon": polygon,
-                "color": color,
-                "label": str(info.get("label") or self._zone_caption(zone, 0, False)),
-            })
-        return {"boxes": boxes, "zones": zones}
-
-    def _detection_overlay(self, detections, missing_labels, color: tuple[int, int, int]) -> list[dict[str, Any]]:
-        if detections is None or detections.class_id is None or len(detections) == 0:
-            return []
-        tracker_ids = list(detections.tracker_id) if detections.tracker_id is not None else []
-        rows = []
-        for index, class_id in enumerate(detections.class_id):
-            raw_tracker = tracker_ids[index] if index < len(tracker_ids) else None
-            tracker_id = None if raw_tracker is None else int(raw_tracker)
-            text = self._box_label(int(class_id), tracker_id)
-            if tracker_id is not None and missing_labels and missing_labels.get(tracker_id):
-                text = f"{text} · falta {', '.join(missing_labels[tracker_id])}"
-            rows.append({
-                "xyxy": [float(value) for value in detections.xyxy[index]],
-                "label": text,
-                "color": color,
-            })
-        return rows
 
     def _attach_jev(self, state: dict[str, Any], persons: list[TrackedPerson]) -> None:
         if _env_flag("SNITCH_JEV_SYNC"):
@@ -1532,45 +1219,35 @@ class StreamAnalyzer:
                 "jev_latency_ms": self._last_jev_latency_ms,
                 "laya_engine": self._laya_engine,
                 "inference_fps": self._inference_fps,
-                "laya_latency_avg_ms": (
-                    round(sum(self._laya_latency_samples) / len(self._laya_latency_samples), 1)
-                    if self._laya_latency_samples else None
-                ),
             }
-
-    def _laya_signature(self, payload: dict[str, Any]) -> str:
-        return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
 
     def _schedule_jev(self, state: dict[str, Any], persons: list[TrackedPerson]) -> None:
         if not self.config.jev_url or not persons:
             return
         interval = float(os.environ.get("SNITCH_JEV_INTERVAL", "1.5"))
-        payload = compact_laya_payload(state)
-        signature = self._laya_signature(payload)
         now = time.time()
         with self._jev_lock:
             if self._jev_inflight:
                 return
-            unchanged = signature == self._laya_signature_value and self._last_jev is not None
-            if unchanged and (now - self._last_jev_ts) < max(interval, 2.0):
+            if self._last_jev is not None and (now - self._last_jev_ts) < interval:
                 return
             self._jev_inflight = True
+        snapshot = json.loads(json.dumps(state))
         threading.Thread(
             target=self._ask_jev_background,
-            args=(payload, signature),
+            args=(snapshot,),
             name="snitch-jev",
             daemon=True,
         ).start()
 
-    def _ask_jev_background(self, snapshot: dict[str, Any], signature: str) -> None:
+    def _ask_jev_background(self, snapshot: dict[str, Any]) -> None:
         try:
-            if self._ask_jev_now(snapshot):
-                self._laya_signature_value = signature
+            self._ask_jev_now(snapshot)
         finally:
             with self._jev_lock:
                 self._jev_inflight = False
 
-    def _ask_jev_now(self, state: dict[str, Any]) -> bool:
+    def _ask_jev_now(self, state: dict[str, Any]) -> None:
         started = time.perf_counter()
         try:
             answers = ask_jev_sync(
@@ -1579,70 +1256,21 @@ class StreamAnalyzer:
                 list(self.config.jev_questions),
             )
             latency_ms = (time.perf_counter() - started) * 1000
+            engine = self._read_laya_engine()
             with self._jev_lock:
-                previous = list(self._laya_latency_samples)
-                previous.append(latency_ms)
-                self._laya_latency_samples = previous[-8:]
                 self._last_jev = answers
                 self._last_jev_error = None
                 self._last_jev_ts = time.time()
                 self._last_jev_latency_ms = latency_ms
-            self._remember_laya_engine()
+                if engine:
+                    self._laya_engine = engine
             state["jev"] = answers
-            return True
         except Exception as exc:  # noqa: BLE001 — motor continua se Jev estiver offline
             with self._jev_lock:
                 self._last_jev_error = str(exc)
             state["jev_error"] = str(exc)
-            return False
-
-    def _attach_laya_phone(self, state: dict[str, Any]) -> None:
-        jev = state.get("jev") if isinstance(state.get("jev"), dict) else self._last_jev or {}
-        if not isinstance(jev, dict):
-            jev = {}
-        idle = jev.get("any_smartphone_idle")
-        using = jev.get("any_person_using_smartphone")
-        if idle is True or using is True:
-            reason = "laya"
-            confirmed: bool | None = True
-            available = True
-        elif idle is False or using is False:
-            reason = "laya_nao_confirmou"
-            confirmed = False
-            available = True
-        else:
-            reason = "laya_indisponivel"
-            confirmed = None
-            available = False
-        labels = {
-            "laya": "Laya confirmou o uso",
-            "laya_nao_confirmou": "Laya não confirmou o uso",
-            "laya_indisponivel": "Laya indisponível",
-        }
-        samples = list(self._laya_latency_samples)
-        average = round(sum(samples) / len(samples), 1) if samples else None
-        state["laya_phone"] = {
-            "available": available,
-            "confirmed": confirmed,
-            "reason": reason,
-            "label": labels[reason],
-            "latency_ms": self._last_jev_latency_ms,
-            "latency_avg_ms": average,
-        }
-
-    def _remember_laya_engine(self) -> None:
-        now = time.time()
-        if now - self._health_at < 15 and self._laya_engine:
-            return
-        self._health_at = now
-        engine = self._read_laya_engine()
-        if engine:
-            with self._jev_lock:
-                self._laya_engine = engine
 
     def _read_laya_engine(self) -> str | None:
-        if not self.config.jev_url:
-            return None
         url = self.config.jev_url.rstrip("/") + "/health"
         try:
             with urllib.request.urlopen(url, timeout=2) as response:
@@ -1703,22 +1331,14 @@ class StreamAnalyzer:
             ))
             if restricted:
                 posted_restricted = True
-        phone_view = state.get("laya_phone") if isinstance(state.get("laya_phone"), dict) else {}
         phone_limit = self._phone_limit()
-        for chosen in state.get("smartphones") or []:
-            if not isinstance(chosen, dict) or not chosen.get("active"):
-                continue
-            record, source = smartphone_record_decision(
-                enabled=bool(self._smartphone.get("enabled")),
-                seconds=int(chosen.get("seconds") or 0),
-                limit=phone_limit,
-                laya_confirmed=phone_view.get("confirmed"),
-                laya_available=bool(phone_view.get("available")),
-            )
-            if not record:
-                continue
+        active_phones = [item for item in (state.get("smartphones") or []) if isinstance(item, dict) and item.get("active")]
+        phone_exceeded = [item for item in active_phones if item.get("exceeded")]
+        jev_phone = jev.get("any_smartphone_idle") is True and bool(active_phones)
+        if self._smartphone.get("enabled") and (phone_exceeded or jev_phone):
+            chosen = max(phone_exceeded or active_phones, key=lambda item: int(item.get("seconds") or 0))
             jobs.append((
-                f"smartphone:{chosen.get('tracker_id')}",
+                "smartphone",
                 f"{web}/snitch/episodes/smartphone",
                 {
                     "enabled": True,
@@ -1729,8 +1349,6 @@ class StreamAnalyzer:
                     "tracker_id": chosen.get("tracker_id"),
                     "smartphone_seconds": int(chosen.get("seconds") or 0),
                     "max_continuous_seconds": phone_limit,
-                    "decision_source": source,
-                    "laya_confirmed": phone_view.get("confirmed") is True,
                 },
             ))
         if jev.get("any_person_in_restricted_zone") is True and not posted_restricted:
@@ -1750,7 +1368,7 @@ class StreamAnalyzer:
             ))
         if not jobs:
             return
-        photo = "data:image/jpeg;base64," + encode_frame_jpeg(render_scene(annotated, self.overlay_snapshot()), quality=60)
+        photo = "data:image/jpeg;base64," + encode_frame_jpeg(annotated, quality=60)
         cooldown = float(os.environ.get("SNITCH_EPISODE_COOLDOWN", "30"))
         now = time.time()
         for key, url, payload in jobs:

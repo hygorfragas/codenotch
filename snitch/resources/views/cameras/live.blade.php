@@ -135,10 +135,7 @@
                         const latency = info.jev_latency_ms == null ? '—' : `${Math.round(info.jev_latency_ms)} ms`;
                         const updated = info.jev_updated_at ? new Date(info.jev_updated_at * 1000).toLocaleTimeString() : '—';
                         const infer = info.inference_fps == null ? '—' : `${info.inference_fps} FPS`;
-                        const display = info.display_fps ?? info.fps ?? localFps;
-                        const age = info.result_age_ms == null ? '—' : `${info.result_age_ms} ms`;
-                        const layaAvg = info.laya_latency_avg_ms == null ? '—' : `${Math.round(info.laya_latency_avg_ms)} ms`;
-                        telemetry.textContent = `Exibição ${display} FPS · Inferência ${infer} · Idade ${age} · Laya ${latency} (média ${layaAvg}) · captura ${info.capture_fps ?? '—'} FPS · ${laya}`;
+                        telemetry.textContent = `FPS ${info.fps ?? localFps} · Inferência ${infer} · Memória: último quadro (sem acúmulo) · Laya ${laya} · ${latency} · atualizado ${updated}`;
                         lastFrameAt = now;
                     }
                     const jev = payload.state && payload.state.jev;
@@ -149,12 +146,7 @@
                         const parts = [];
                         if (phone) {
                             const clock = phone.limit ? `${phone.seconds}s / ${phone.limit}s` : `${phone.seconds}s`;
-                            const where = phone.near_ear ? 'perto da orelha' : (phone.in_front_of_face ? 'à frente do rosto' : (phone.hands_overlap ? 'na mão' : 'visível'));
-                            parts.push(`Celular em uso: sim (${clock}, ${where})`);
-                        }
-                        const layaPhone = payload.state && payload.state.laya_phone;
-                        if (layaPhone && layaPhone.label) {
-                            parts.push(layaPhone.label);
+                            parts.push(`Celular em uso: sim (${clock})`);
                         }
                         if (missingLabels.length) {
                             parts.push(`EPI ausente: ${missingLabels.join(', ')}`);

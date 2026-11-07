@@ -1,4 +1,4 @@
-"""Servidor SSE — a captura guarda só o quadro novo e a exibição não espera o modelo."""
+"""Servidor SSE mínimo — publica JPEG base64 anotado para o Laravel fazer proxy."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from analyze_stream import (
     _is_video_file,
     encode_frame_jpeg,
     load_config_from_env,
-    render_scene,
 )
 
 _CORS = {
@@ -25,39 +24,6 @@ _CORS = {
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "*",
 }
-
-
-class LatestFrame:
-    """Fila de um quadro: cada captura substitui a anterior e as velhas são descartadas."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self.frame: Any = None
-        self.seq = 0
-        self.captured_at = 0.0
-        self._count = 0
-        self._window = time.perf_counter()
-        self.capture_fps = 0.0
-
-    def publish(self, frame: Any) -> int:
-        now = time.perf_counter()
-        with self._lock:
-            self.frame = frame
-            self.seq += 1
-            self.captured_at = time.time()
-            self._count += 1
-            elapsed = now - self._window
-            if elapsed >= 0.5:
-                self.capture_fps = round(self._count / elapsed, 1)
-                self._count = 0
-                self._window = now
-            return self.seq
-
-    def latest(self) -> tuple[int, Any, float, float] | None:
-        with self._lock:
-            if self.frame is None:
-                return None
-            return self.seq, self.frame, self.captured_at, self.capture_fps
 
 
 async def health(_request: web.Request) -> web.Response:
@@ -69,7 +35,7 @@ async def preflight(_request: web.Request) -> web.Response:
 
 
 class FrameGrabber:
-    """Leitura contínua. Só o quadro mais recente permanece."""
+    """Leitura aberta na thread principal; o loop seguinte só consome o último quadro."""
 
     def __init__(self, source: str | int) -> None:
         self.source = source
@@ -80,8 +46,7 @@ class FrameGrabber:
         if not ok or frame is None:
             self.capture.release()
             raise RuntimeError(f"Não foi possível ler o primeiro quadro: {source}")
-        self.latest = LatestFrame()
-        self.latest.publish(frame)
+        self.latest = frame
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="snitch-grabber", daemon=True)
         self._thread.start()
@@ -93,9 +58,9 @@ class FrameGrabber:
                 if _is_video_file(self.source):
                     self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
-                time.sleep(0.02)
+                time.sleep(0.05)
                 continue
-            self.latest.publish(frame)
+            self.latest = frame
 
     def close(self) -> None:
         self._stop.set()
@@ -118,6 +83,7 @@ def _analyzer_for_camera(config: AnalyzeStreamConfig, camera_id: int) -> StreamA
 
 async def camera_stream(request: web.Request) -> web.StreamResponse:
     camera_id = int(request.match_info["camera"])
+
     response = web.StreamResponse(
         status=200,
         reason="OK",
@@ -129,6 +95,7 @@ async def camera_stream(request: web.Request) -> web.StreamResponse:
         },
     )
     await response.prepare(request)
+
     latest = request.app["latest"]
     lock: threading.Lock = request.app["latest_lock"]
     started = time.perf_counter()
@@ -139,21 +106,26 @@ async def camera_stream(request: web.Request) -> web.StreamResponse:
                 jpeg = latest.get("jpeg")
                 state = latest.get("state")
             if not jpeg or not isinstance(state, dict):
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0.05)
                 continue
             sent += 1
             elapsed = time.perf_counter() - started
             payload_state = json.loads(json.dumps(state))
             telemetry = dict(payload_state.get("telemetry") or {})
-            telemetry["fps"] = round(sent / elapsed, 1) if elapsed >= 0.5 else telemetry.get("display_fps", 0.0)
+            telemetry["fps"] = round(sent / elapsed, 1) if elapsed >= 0.5 else 0.0
             if camera_id:
                 payload_state["camera_id"] = camera_id
             payload_state["telemetry"] = telemetry
-            payload = {"camera_id": camera_id, "image_jpeg_base64": jpeg, "state": payload_state}
+            payload = {
+                "camera_id": camera_id,
+                "image_jpeg_base64": jpeg,
+                "state": payload_state,
+            }
             await response.write(f"event: frame\ndata: {json.dumps(payload)}\n\n".encode())
             await asyncio.sleep(1 / 30)
     except (asyncio.CancelledError, ConnectionResetError, RuntimeError):
         raise
+
     return response
 
 
@@ -171,65 +143,26 @@ def create_app(config: AnalyzeStreamConfig | None = None, stream_source: Any = N
 
 
 def _detect_loop(analyzer: StreamAnalyzer, grabber: FrameGrabber, latest: dict[str, Any], lock: threading.Lock) -> None:
-    last_seq = -1
+    seen: int | None = None
     while True:
-        snap = grabber.latest.latest()
-        if snap is None or snap[0] == last_seq:
-            time.sleep(0.004)
+        frame = grabber.latest
+        marker = id(frame)
+        if frame is None or marker == seen:
+            time.sleep(0.01)
             continue
-        seq, frame, captured_at, _capture_fps = snap
-        if grabber.latest.seq != seq:
-            continue
-        last_seq = seq
+        seen = marker
         try:
-            _annotated, state = analyzer.process_frame(frame, render=False)
+            annotated, state = analyzer.process_frame(frame.copy())
+            jpeg = encode_frame_jpeg(annotated)
         except Exception as exc:  # noqa: BLE001
             with lock:
                 latest["error"] = str(exc)
-            time.sleep(0.05)
+            time.sleep(0.2)
             continue
         with lock:
-            latest["state"] = state
-            latest["inference_at"] = time.time()
-            latest["captured_at"] = captured_at
-            latest["error"] = None
-
-
-def _publish_loop(analyzer: StreamAnalyzer, grabber: FrameGrabber, latest: dict[str, Any], lock: threading.Lock) -> None:
-    sent = 0
-    window = time.perf_counter()
-    display_fps = 0.0
-    while True:
-        started = time.perf_counter()
-        snap = grabber.latest.latest()
-        if snap is None:
-            time.sleep(0.02)
-            continue
-        _seq, frame, _captured_at, capture_fps = snap
-        overlay = analyzer.overlay_snapshot()
-        image = render_scene(frame, overlay) if overlay.get("boxes") or overlay.get("zones") else frame
-        jpeg = encode_frame_jpeg(image, quality=72)
-        sent += 1
-        now = time.perf_counter()
-        if now - window >= 0.5:
-            display_fps = round(sent / (now - window), 1)
-            sent = 0
-            window = now
-        with lock:
-            inference_at = latest.get("inference_at")
-            age = int((time.time() - inference_at) * 1000) if inference_at else None
-            state = latest.get("state")
-            if isinstance(state, dict):
-                telemetry = dict(state.get("telemetry") or {})
-                telemetry["display_fps"] = display_fps
-                telemetry["capture_fps"] = capture_fps
-                telemetry["result_age_ms"] = age
-                state["telemetry"] = telemetry
-                latest["state"] = state
             latest["jpeg"] = jpeg
-        remaining = (1 / 30) - (time.perf_counter() - started)
-        if remaining > 0:
-            time.sleep(remaining)
+            latest["state"] = state
+            latest["error"] = None
 
 
 def run_sse_server(
@@ -249,12 +182,6 @@ def run_sse_server(
         target=_detect_loop,
         args=(analyzer, grabber, app["latest"], app["latest_lock"]),
         name="snitch-detect",
-        daemon=True,
-    ).start()
-    threading.Thread(
-        target=_publish_loop,
-        args=(analyzer, grabber, app["latest"], app["latest_lock"]),
-        name="snitch-publish",
         daemon=True,
     ).start()
     web.run_app(app, host=host, port=port, print=lambda *_args, **_kwargs: None)
