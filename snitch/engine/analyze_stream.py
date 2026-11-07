@@ -256,8 +256,8 @@ def _env_flag(name: str) -> bool:
 
 
 def _resolve_device() -> str:
-    chosen = os.environ.get("SNITCH_YOLO_DEVICE", "").strip()
-    if chosen:
+    chosen = os.environ.get("SNITCH_YOLO_DEVICE", "").strip().lower()
+    if chosen in {"cpu", "mps", "cuda"}:
         return chosen
     try:
         import torch
@@ -266,6 +266,28 @@ def _resolve_device() -> str:
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+def coreml_requested() -> bool:
+    """CoreML só no Mac, e só quando o dispositivo não foi fixado em cpu, mps ou cuda."""
+    if sys.platform != "darwin":
+        return False
+    chosen = os.environ.get("SNITCH_YOLO_DEVICE", "").strip().lower()
+    return chosen in {"", "auto", "coreml", "ane"}
+
+
+def _ensure_coreml_package(weights: Path) -> Path:
+    """Gera o pacote FP16 em 640 ao lado do .pt. O Neural Engine usa esse arquivo."""
+    package = weights.with_name(f"{weights.stem}.mlpackage")
+    marker = package / "Manifest.json"
+    if marker.is_file() and marker.stat().st_mtime >= weights.stat().st_mtime:
+        return package
+    exported = Path(_import_yolo()(str(weights)).export(format="coreml", imgsz=640, quantize=16, nms=False))
+    if not package.is_dir() and exported.is_dir():
+        return exported
+    if not (package / "Manifest.json").is_file():
+        raise FileNotFoundError(f"CoreML não gerou {package}")
+    return package
 
 
 def _box_area(box: np.ndarray) -> float:
@@ -371,6 +393,7 @@ class StreamAnalyzer:
         self._config_ts = 0.0
         self._occupancy: dict[tuple[str, int, str], dict[str, Any]] = {}
         self._device = "cpu"
+        self._backend = "pytorch"
         self._ppe_memory: dict[tuple[int, str], dict[str, Any]] = {}
         self._ppe_votes: dict[tuple[int, str], deque[bool]] = {}
         self._vote_at: dict[int, float] = {}
@@ -387,14 +410,12 @@ class StreamAnalyzer:
                     f"Pesos SH17 não encontrados em {weights}. "
                     "Defina SH17_WEIGHTS ou SNITCH_VISION_MOCK=1."
                 )
-            self._model = YOLO(weights)
-            self._device = _resolve_device()
-            try:
-                self._model.to(self._device)
-            except Exception:  # noqa: BLE001
-                self._device = "cpu"
-                self._model.to(self._device)
-            print(f"SH17 {weights} device={self._device}", file=sys.stderr, flush=True)
+            self._load_model(weights)
+            print(
+                f"SH17 {weights} backend={self._backend} device={self._device}",
+                file=sys.stderr,
+                flush=True,
+            )
             for zone in config.zones:
                 self._polygon_zones.append(
                     (zone.name, sv.PolygonZone(polygon=zone.polygon))
@@ -415,15 +436,43 @@ class StreamAnalyzer:
         confidence = np.array([0.9])
         return sv.Detections(xyxy=xyxy, class_id=class_id, confidence=confidence)
 
+    def _load_pytorch(self, weights: str) -> None:
+        self._model = _import_yolo()(weights)
+        self._backend = "pytorch"
+        self._device = _resolve_device()
+        try:
+            self._model.to(self._device)
+        except Exception:  # noqa: BLE001
+            self._device = "cpu"
+            self._model.to(self._device)
+
+    def _load_model(self, weights: str) -> None:
+        if coreml_requested():
+            try:
+                package = _ensure_coreml_package(Path(weights))
+                self._model = _import_yolo()(str(package))
+                self._backend = "coreml"
+                self._device = "ane"
+                self._predict(np.zeros((64, 64, 3), dtype=np.uint8), YOLO_BASE_CONF, 640)
+                return
+            except Exception as exc:  # noqa: BLE001 — Mac sem CoreML segue no MPS
+                print(f"CoreML indisponível ({exc}); usando PyTorch.", file=sys.stderr, flush=True)
+        self._load_pytorch(weights)
+
+    def _predict(self, image: np.ndarray, conf: float, imgsz: int):
+        assert self._model is not None
+        if self._backend == "coreml":
+            return self._model(image, verbose=False, conf=conf, imgsz=imgsz)[0]
+        return self._model(image, verbose=False, conf=conf, imgsz=imgsz, device=self._device)[0]
+
     def _run_yolo(self, frame: np.ndarray):
         if self.config.mock:
             return self._mock_detections(frame)
 
-        assert self._model is not None
-        results = self._model(frame, verbose=False, conf=YOLO_BASE_CONF, imgsz=640, device=self._device)[0]
         import supervision as sv
 
-        return self._filter_by_class_confidence(sv.Detections.from_ultralytics(results))
+        detected = sv.Detections.from_ultralytics(self._predict(frame, YOLO_BASE_CONF, 640))
+        return self._filter_by_class_confidence(detected)
 
     def _keep_detection(self, label: str, confidence: float, box: np.ndarray, anchors: list[np.ndarray]) -> bool:
         if label in {"person", "head", "face"}:
@@ -726,16 +775,17 @@ class StreamAnalyzer:
         if right - left < 12 or bottom - top < 12:
             return []
         crop = frame[top:bottom, left:right]
-        resized = cv2.resize(crop, (416, 416), interpolation=cv2.INTER_CUBIC)
-        assert self._model is not None
-        results = self._model(resized, verbose=False, conf=SMALL_PPE_CONF, imgsz=416, device=self._device)[0]
+        # O pacote CoreML aceita 640 fixo. No PyTorch o recorte continua em 416.
+        infer_size = 640 if self._backend == "coreml" else 416
+        resized = cv2.resize(crop, (infer_size, infer_size), interpolation=cv2.INTER_CUBIC)
+        results = self._predict(resized, SMALL_PPE_CONF, infer_size)
         import supervision as sv
 
         detections = sv.Detections.from_ultralytics(results)
         if detections.class_id is None or len(detections) == 0:
             return []
-        scale_x = (right - left) / 416
-        scale_y = (bottom - top) / 416
+        scale_x = (right - left) / infer_size
+        scale_y = (bottom - top) / infer_size
         found: list[tuple[list[float], int, float, str]] = []
         for index, class_id in enumerate(detections.class_id):
             label = self._class_label(int(class_id))
