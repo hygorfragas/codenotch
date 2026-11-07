@@ -35,6 +35,35 @@ class Episode extends Model
         ];
     }
 
+    public function typeLabel(): string
+    {
+        return match ($this->type) {
+            EpisodeType::MissingPpe => 'EPI ausente',
+            EpisodeType::IdleZone => 'Ociosidade na zona',
+            EpisodeType::Smartphone => 'Uso de smartphone',
+        };
+    }
+
+    public function thumbnailSrc(): string
+    {
+        $photo = (string) ($this->photo ?? '');
+        if ($photo !== '' && (str_starts_with($photo, 'data:') || str_starts_with($photo, 'http://') || str_starts_with($photo, 'https://'))) {
+            return $photo;
+        }
+
+        $kind = $this->type instanceof EpisodeType ? $this->type->value : 'episodio';
+
+        return self::badgeDataUri($kind);
+    }
+
+    public static function badgeDataUri(string $kind): string
+    {
+        $safe = htmlspecialchars($kind, ENT_QUOTES);
+        $svg = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#0f172a"/><text x="160" y="96" fill="#34d399" font-size="18" text-anchor="middle" font-family="sans-serif">'.$safe.'</text></svg>';
+
+        return 'data:image/svg+xml;base64,'.base64_encode($svg);
+    }
+
     /** @return BelongsTo<Company, $this> */
     public function company(): BelongsTo
     {

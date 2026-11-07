@@ -31,7 +31,7 @@
         <section aria-labelledby="photo-heading" class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 lg:col-span-1">
             <h2 id="photo-heading" class="text-lg font-semibold text-white">Foto recente</h2>
             @if ($latestPhoto)
-                <img src="{{ $latestPhoto }}" alt="Registro recente de {{ $employee->name }}" class="mt-4 w-full rounded-lg border border-slate-700 object-cover">
+                <img src="{{ $history->first()?->thumbnailSrc() ?? $latestPhoto }}" alt="Registro recente de {{ $employee->name }}" class="mt-4 w-full rounded-lg border border-slate-700 object-cover">
             @else
                 <p class="mt-4 text-sm text-slate-400">Sem foto registrada.</p>
             @endif
@@ -57,7 +57,7 @@
             <ul class="mt-4 max-h-96 space-y-3 overflow-y-auto pr-1">
                 @forelse ($history as $episode)
                     <li class="rounded-lg border border-slate-800/80 bg-slate-950/40 p-3">
-                        <p class="text-sm font-medium capitalize text-slate-100">{{ $episode->type->value }}@if ($episode->subtype) · {{ $episode->subtype }}@endif</p>
+                        <p class="text-sm font-medium text-slate-100">{{ $episode->typeLabel() }} ({{ $episode->type->value }})</p>
                         <p class="text-xs text-slate-400">{{ $episode->recorded_at->format('d/m/Y H:i') }}</p>
                     </li>
                 @empty

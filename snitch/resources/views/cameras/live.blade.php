@@ -22,6 +22,7 @@
             </div>
             <p id="live-status" class="text-sm font-medium text-emerald-400" role="status">Conectando…</p>
         </div>
+        <p id="live-telemetry" class="mb-1 text-sm text-slate-300">FPS — · quadro — · Laya aguardando</p>
         <p id="live-decisions" class="mb-4 text-sm text-slate-300"></p>
 
         <div class="relative aspect-video overflow-hidden rounded-lg border border-slate-700 bg-slate-950">
@@ -35,6 +36,33 @@
             </div>
         </div>
     </section>
+
+    <x-engine-status />
+
+    <section class="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+        <h2 class="text-sm font-semibold text-white">Vincular trilha a um colaborador</h2>
+        <p class="mt-1 text-sm text-slate-400">O número aparece na caixa, por exemplo Track #1. Depois do vínculo a caixa mostra [#1 Nome].</p>
+        <ul class="mt-3 space-y-1 text-sm text-slate-300">
+            @foreach ($trackerLinks as $link)
+                <li>Track #{{ $link->tracker_id }} → {{ $link->employee?->name ?? 'sem nome' }}</li>
+            @endforeach
+        </ul>
+        <form method="post" action="{{ route('snitch.settings.tracker-links.store') }}" class="mt-3 flex flex-wrap items-end gap-2">
+            @csrf
+            <input type="hidden" name="camera_id" value="{{ $camera->id }}">
+            <label class="text-sm text-slate-300">Track
+                <input type="number" name="tracker_id" min="1" required class="mt-1 block w-24 rounded-md border border-slate-700 bg-slate-950 px-2 py-1">
+            </label>
+            <label class="text-sm text-slate-300">Colaborador
+                <select name="employee_id" required class="mt-1 block rounded-md border border-slate-700 bg-slate-950 px-2 py-1">
+                    @foreach ($employees as $employee)
+                        <option value="{{ $employee->id }}">{{ $employee->name }}</option>
+                    @endforeach
+                </select>
+            </label>
+            <button class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white">Vincular</button>
+        </form>
+    </section>
 @endsection
 
 @push('scripts')
@@ -43,9 +71,13 @@
             const frame = document.getElementById('live-frame');
             const status = document.getElementById('live-status');
             const decisions = document.getElementById('live-decisions');
+            const telemetry = document.getElementById('live-telemetry');
+            let lastFrameAt = 0;
+            let frames = 0;
+            let fpsStamp = performance.now();
             const errorBox = document.getElementById('live-error');
             const placeholder = document.getElementById('live-placeholder');
-            const streamUrl = @json($streamUrl);
+            const streamUrl = @json($engineStreamUrl ?? $streamUrl);
             const jevLabels = {
                 any_missing_required_ppe: 'EPI obrigatório faltando',
                 any_person_in_restricted_zone: 'Pessoa em zona restrita',
@@ -68,6 +100,16 @@
                         errorBox.classList.remove('flex');
                         status.textContent = 'Ao vivo';
                         status.className = 'text-sm font-medium text-emerald-400';
+                        frames += 1;
+                        const now = performance.now();
+                        const elapsed = (now - fpsStamp) / 1000;
+                        const localFps = elapsed > 0 ? (frames / elapsed).toFixed(1) : '0.0';
+                        const info = (payload.state && payload.state.telemetry) || {};
+                        const laya = info.laya_engine || 'aguardando';
+                        const latency = info.jev_latency_ms == null ? '—' : `${Math.round(info.jev_latency_ms)} ms`;
+                        const updated = info.jev_updated_at ? new Date(info.jev_updated_at * 1000).toLocaleTimeString() : '—';
+                        telemetry.textContent = `FPS ${info.fps ?? localFps} · quadro ${info.frame_index ?? frames} · Laya ${laya} · ${latency} · atualizado ${updated}`;
+                        lastFrameAt = now;
                     }
                     const jev = payload.state && payload.state.jev;
                     if (jev && typeof jev === 'object') {

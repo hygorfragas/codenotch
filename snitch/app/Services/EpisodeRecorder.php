@@ -23,28 +23,30 @@ class EpisodeRecorder
 
         $employeeId = $payload['employee_id'] ?? null;
         if ($employeeId === null) {
-            return $this->persistEpisode(
-                type: EpisodeType::MissingPpe,
-                employeeId: null,
-                locationId: $payload['location_id'] ?? null,
-                metadata: [
-                    'required_ppe' => $requiredPpe,
-                    'detected_ppe' => $payload['detected_ppe'] ?? [],
-                    'linked_to_employee' => false,
-                ],
-            );
-        }
-
         return $this->persistEpisode(
             type: EpisodeType::MissingPpe,
-            employeeId: (int) $employeeId,
+            employeeId: null,
             locationId: $payload['location_id'] ?? null,
             metadata: [
                 'required_ppe' => $requiredPpe,
                 'detected_ppe' => $payload['detected_ppe'] ?? [],
-                'linked_to_employee' => true,
+                'linked_to_employee' => false,
             ],
+            photo: $payload['photo'] ?? null,
         );
+    }
+
+    return $this->persistEpisode(
+        type: EpisodeType::MissingPpe,
+        employeeId: (int) $employeeId,
+        locationId: $payload['location_id'] ?? null,
+        metadata: [
+            'required_ppe' => $requiredPpe,
+            'detected_ppe' => $payload['detected_ppe'] ?? [],
+            'linked_to_employee' => true,
+        ],
+        photo: $payload['photo'] ?? null,
+    );
     }
 
     public function recordIdleZone(array $payload): ?Episode
@@ -72,6 +74,7 @@ class EpisodeRecorder
                 'zone' => $zone,
                 'zone_type' => $zoneType ?? $zone,
             ],
+            photo: $payload['photo'] ?? null,
         );
     }
 
@@ -92,6 +95,7 @@ class EpisodeRecorder
             metadata: [
                 'enabled' => true,
             ],
+            photo: $payload['photo'] ?? null,
         );
     }
 
@@ -100,6 +104,7 @@ class EpisodeRecorder
         ?int $employeeId,
         ?int $locationId,
         array $metadata,
+        ?string $photo = null,
     ): Episode {
         $recordedAt = Carbon::now();
         [$companyId, $resolvedLocationId] = $this->resolveCompanyAndLocation($employeeId, $locationId);
@@ -109,7 +114,7 @@ class EpisodeRecorder
             'location_id' => $resolvedLocationId,
             'employee_id' => $employeeId,
             'type' => $type,
-            'photo' => $this->capturePhotoReference($type->value, $metadata),
+            'photo' => $this->capturePhotoReference($type->value, $metadata, $photo),
             'recorded_at' => $recordedAt,
             'metadata' => $metadata,
         ]);
@@ -139,11 +144,14 @@ class EpisodeRecorder
         return [1, 1];
     }
 
-    private function capturePhotoReference(string $kind, array $metadata): string
+    private function capturePhotoReference(string $kind, array $metadata, ?string $provided = null): string
     {
-        $stamp = Carbon::now()->format('Y-m-d\TH:i:s');
+        unset($metadata);
+        if (is_string($provided) && (str_starts_with($provided, 'data:image/') || str_starts_with($provided, 'http://') || str_starts_with($provided, 'https://'))) {
+            return $provided;
+        }
 
-        return "snitch/episodes/{$kind}/{$stamp}.jpg";
+        return Episode::badgeDataUri($kind);
     }
 
     public function episodeResponse(Episode $episode): array

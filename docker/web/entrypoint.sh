@@ -44,9 +44,12 @@ QUEUE_CONNECTION=database
 CACHE_STORE=database
 MAIL_MAILER=log
 SNITCH_ENGINE_URL=http://host.docker.internal:8765
+SNITCH_ENGINE_PUBLIC_URL=http://127.0.0.1:8765
 SH17_WEIGHTS=/weights/sh17.pt
 JEV_URL=http://host.docker.internal:8787
 EOF
+
+export PHP_CLI_SERVER_WORKERS="${PHP_CLI_SERVER_WORKERS:-8}"
 
 php -r '$pdo = new PDO("sqlite:/data/database.sqlite"); $pdo->exec("PRAGMA journal_mode=WAL;");'
 
