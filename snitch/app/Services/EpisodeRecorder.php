@@ -140,22 +140,12 @@ class EpisodeRecorder
 
         return $this->persistEpisode(
             type: EpisodeType::Smartphone,
-            employeeId: $this->nullableForeignId($payload['employee_id'] ?? null),
+            employeeId: isset($payload['employee_id']) ? (int) $payload['employee_id'] : null,
             locationId: $payload['location_id'] ?? null,
             metadata: [
                 'enabled' => true,
-                'smartphone_seconds' => isset($payload['smartphone_seconds']) && is_numeric($payload['smartphone_seconds'])
-                    ? (int) $payload['smartphone_seconds']
-                    : null,
-                'max_continuous_seconds' => isset($payload['max_continuous_seconds']) && is_numeric($payload['max_continuous_seconds'])
-                    ? (int) $payload['max_continuous_seconds']
-                    : null,
-                'tracker_id' => isset($payload['tracker_id']) && is_numeric($payload['tracker_id'])
-                    ? (int) $payload['tracker_id']
-                    : null,
             ],
             photo: $payload['photo'] ?? null,
-            cameraId: $this->nullableForeignId($payload['camera_id'] ?? null),
         );
     }
 

@@ -49,7 +49,7 @@ class Episode extends Model
         return match ($this->type) {
             EpisodeType::MissingPpe => $this->missingPpeSummary(),
             EpisodeType::IdleZone => $this->idleZoneSummary(),
-            EpisodeType::Smartphone => $this->smartphoneSummary(),
+            EpisodeType::Smartphone => 'Uso de smartphone (smartphone)',
         };
     }
 
@@ -183,21 +183,6 @@ class Episode extends Model
             'harness' => 'Cinto de segurança',
             default => $key,
         };
-    }
-
-    private function smartphoneSummary(): string
-    {
-        $meta = $this->metadata ?? [];
-        $seconds = $meta['smartphone_seconds'] ?? null;
-        $limit = $meta['max_continuous_seconds'] ?? $meta['hand_limit_seconds'] ?? null;
-        if (is_numeric($seconds) && is_numeric($limit) && (int) $limit > 0) {
-            return 'Uso de smartphone: '.(int) $seconds.'s / '.(int) $limit.'s';
-        }
-        if (is_numeric($seconds)) {
-            return 'Uso de smartphone: '.(int) $seconds.'s';
-        }
-
-        return 'Uso de smartphone (smartphone)';
     }
 
     private function idleZoneLabel(): string

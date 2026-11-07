@@ -261,7 +261,6 @@ class SettingsController extends Controller
             'smartphone' => [
                 'enabled' => (bool) $model->location->smartphoneSetting?->enabled,
                 'hand_limit_seconds' => $model->location->smartphoneSetting?->hand_limit_seconds,
-                'max_continuous_seconds' => $model->location->smartphoneSetting?->hand_limit_seconds,
             ],
             'tracker_links' => $links,
         ]);

@@ -140,14 +140,8 @@
                     }
                     const jev = payload.state && payload.state.jev;
                     const missingLabels = (payload.state && payload.state.missing_ppe_labels_pt) || [];
-                    const phones = (payload.state && payload.state.smartphones) || [];
-                    const phone = phones.find((item) => item && item.active) || null;
-                    if ((jev && typeof jev === 'object') || missingLabels.length || phone) {
+                    if ((jev && typeof jev === 'object') || missingLabels.length) {
                         const parts = [];
-                        if (phone) {
-                            const clock = phone.limit ? `${phone.seconds}s / ${phone.limit}s` : `${phone.seconds}s`;
-                            parts.push(`Celular em uso: sim (${clock})`);
-                        }
                         if (missingLabels.length) {
                             parts.push(`EPI ausente: ${missingLabels.join(', ')}`);
                             parts.push(`EPI obrigatório faltando: sim (${missingLabels.join(', ')})`);

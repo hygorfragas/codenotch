@@ -94,8 +94,6 @@ DISPLAY_LABELS: dict[str, str] = {
     "foot": "Pé",
     "tool": "Ferramenta",
     "harness": "Cinto de segurança",
-    "smartphone": "Celular",
-    "cell phone": "Celular",
 }
 
 
@@ -113,12 +111,8 @@ ZONE_MIN_OVERLAP = 0.15
 YOLO_BASE_CONF = 0.10
 STRONG_CLASS_CONF = 0.25
 SMALL_PPE_CONF = 0.10
-EAR_PROTECTION_CONF = 0.35
-PHONE_CONF = 0.20
-PHONE_HOLD_SECONDS = 1.5
-COCO_PHONE_CLASS = 67
 PPE_MEMORY_SECONDS = 2.2
-SMALL_PPE_LABELS = frozenset({"goggles", "mask", "gloves", "face-guard"})
+SMALL_PPE_LABELS = frozenset({"goggles", "ear_protection", "mask", "gloves", "face-guard"})
 CROP_PPE_LABELS = frozenset({"goggles", "helmet", "mask", "ear_protection", "face-guard"})
 _BUNDLED_FONT = Path(__file__).resolve().parent / "fonts" / "DejaVuSans-Bold.ttf"
 FONT_CANDIDATES: tuple[Path, ...] = (
@@ -326,7 +320,6 @@ class AnalyzeStreamConfig:
     jev_questions: tuple[str, ...] = (
         "any_missing_required_ppe",
         "any_person_in_restricted_zone",
-        "any_smartphone_idle",
     )
 
 
@@ -349,17 +342,7 @@ class StreamAnalyzer:
         self._episode_lock = threading.Lock()
         self._episode_at: dict[str, float] = {}
         self._tracker_links: dict[str, dict[str, Any]] = {}
-        self._smartphone: dict[str, Any] = {
-            "enabled": False,
-            "hand_limit_seconds": None,
-            "max_continuous_seconds": None,
-        }
-        self._coco = None
-        self._cached_phones: list[list[float]] = []
-        self._cached_phones_at = 0.0
-        self._phone_since: dict[int, float] = {}
-        self._phone_hold: dict[int, float] = {}
-        self._phone_boxes: dict[int, list[float]] = {}
+        self._smartphone: dict[str, Any] = {"enabled": False, "hand_limit_seconds": None}
         self._config_lock = threading.Lock()
         self._config_inflight = False
         self._config_ts = 0.0
@@ -387,16 +370,6 @@ class StreamAnalyzer:
                 self._device = "cpu"
                 self._model.to(self._device)
             print(f"SH17 {weights} device={self._device}", file=sys.stderr, flush=True)
-            coco_path = self._coco_weights_path(Path(weights))
-            if coco_path is not None:
-                self._coco = YOLO(str(coco_path))
-                try:
-                    self._coco.to(self._device)
-                except Exception:  # noqa: BLE001
-                    self._coco.to("cpu")
-                print(f"COCO celular {coco_path} device={self._device}", file=sys.stderr, flush=True)
-            else:
-                print("COCO ausente: celular não será detectado.", file=sys.stderr, flush=True)
             for zone in config.zones:
                 self._polygon_zones.append(
                     (zone.name, sv.PolygonZone(polygon=zone.polygon))
@@ -430,8 +403,6 @@ class StreamAnalyzer:
     def _keep_detection(self, label: str, confidence: float, box: np.ndarray, anchors: list[np.ndarray]) -> bool:
         if label in {"person", "head", "face"}:
             return confidence >= STRONG_CLASS_CONF
-        if label == "ear_protection":
-            return confidence >= EAR_PROTECTION_CONF
         if label in SMALL_PPE_LABELS:
             if confidence < SMALL_PPE_CONF:
                 return False
@@ -578,10 +549,7 @@ class StreamAnalyzer:
         for index, class_id in enumerate(detections.class_id):
             label = self._class_label(int(class_id))
             confidence = float(detections.confidence[index])
-            if label not in CROP_PPE_LABELS:
-                continue
-            minimum = EAR_PROTECTION_CONF if label == "ear_protection" else SMALL_PPE_CONF
-            if confidence < minimum:
+            if label not in CROP_PPE_LABELS or confidence < SMALL_PPE_CONF:
                 continue
             box = detections.xyxy[index]
             found.append((
@@ -629,7 +597,7 @@ class StreamAnalyzer:
             person_box = people.xyxy[index]
             anchor = self._facial_anchor(person_box, parts)
             present = self._labels_inside(person_box, parts)
-            if self._should_zoom_for_glasses(present) and crops < 1:
+            if "goggles" not in present and crops < 2 and now - self._roi_at.get(tid, 0.0) >= 0.15:
                 self._roi_at[tid] = now
                 crops += 1
                 for box, class_id, confidence, label in self._infer_crop(frame, anchor):
@@ -661,150 +629,6 @@ class StreamAnalyzer:
         for key in expired:
             self._ppe_memory.pop(key, None)
         return self._append_detections(parts, added)
-
-    def _should_zoom_for_glasses(self, present: set[str]) -> bool:
-        required = set(self.config.required_ppe)
-        if "goggles" not in required and "glasses" not in required:
-            return False
-        if "goggles" in present:
-            return False
-        return self._frame_index % 3 == 0
-
-    def _coco_weights_path(self, sh17: Path) -> Path | None:
-        configured = os.environ.get("SNITCH_COCO_WEIGHTS", "").strip()
-        candidates = []
-        if configured:
-            candidates.append(Path(configured))
-        candidates.extend((
-            sh17.parent / "yolov8n-coco.pt",
-            sh17.parent / "yolov8n.pt",
-            Path("/weights/yolov8n-coco.pt"),
-            Path("storage/engine/yolov8n-coco.pt"),
-        ))
-        for candidate in candidates:
-            if candidate.is_file():
-                return candidate
-        return None
-
-    def _phone_limit(self) -> int | None:
-        raw = self._smartphone.get("max_continuous_seconds")
-        if raw is None:
-            raw = self._smartphone.get("hand_limit_seconds")
-        if raw is None or not str(raw).strip():
-            return None
-        try:
-            value = int(raw)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
-
-    def _detect_phones(self, frame: np.ndarray) -> list[list[float]]:
-        if self._coco is None:
-            return []
-        results = self._coco.predict(
-            frame,
-            classes=[COCO_PHONE_CLASS],
-            conf=PHONE_CONF,
-            imgsz=640,
-            verbose=False,
-            device=self._device,
-        )
-        boxes = results[0].boxes
-        if boxes is None or len(boxes) == 0:
-            return []
-        xyxy = boxes.xyxy
-        if hasattr(xyxy, "cpu"):
-            xyxy = xyxy.cpu().numpy()
-        return [[float(value) for value in box] for box in xyxy]
-
-    def _phone_boxes_for_frame(self, frame: np.ndarray, now: float) -> list[list[float]]:
-        if self._coco is None:
-            return []
-        if self._frame_index % 2 == 0 or not self._cached_phones:
-            self._cached_phones = self._detect_phones(frame)
-            self._cached_phones_at = now
-        elif now - self._cached_phones_at > PHONE_HOLD_SECONDS:
-            self._cached_phones = []
-        return self._cached_phones
-
-    def _phone_near_person(self, phone: list[float], person_box: np.ndarray, parts) -> bool:
-        expanded = np.array([
-            float(person_box[0]) - 40,
-            float(person_box[1]) - 40,
-            float(person_box[2]) + 40,
-            float(person_box[3]) + 40,
-        ], dtype=np.float32)
-        if self._center_inside(np.array(phone), expanded):
-            return True
-        if parts is None or parts.class_id is None:
-            return False
-        for index, class_id in enumerate(parts.class_id):
-            if self._class_label(int(class_id)) != "hand":
-                continue
-            if self._center_inside(np.array(phone), parts.xyxy[index]) and self._center_inside(parts.xyxy[index], expanded):
-                return True
-        return False
-
-    def _observe_smartphones(self, people, phone_boxes: list[list[float]], parts, now: float) -> list[dict[str, Any]]:
-        if people.tracker_id is None or len(people) == 0:
-            return []
-        limit = self._phone_limit()
-        seen: set[int] = set()
-        statuses: list[dict[str, Any]] = []
-        for index, tracker_id in enumerate(people.tracker_id):
-            if tracker_id is None:
-                continue
-            tid = int(tracker_id)
-            person_box = people.xyxy[index]
-            matched = next((box for box in phone_boxes if self._phone_near_person(box, person_box, parts)), None)
-            if matched is not None:
-                self._phone_hold[tid] = now
-                self._phone_boxes[tid] = matched
-                self._phone_since.setdefault(tid, now)
-            elif tid in self._phone_hold and now - self._phone_hold[tid] <= PHONE_HOLD_SECONDS:
-                matched = self._phone_boxes.get(tid)
-            else:
-                self._phone_since.pop(tid, None)
-                self._phone_hold.pop(tid, None)
-                self._phone_boxes.pop(tid, None)
-                continue
-            if matched is None or tid not in self._phone_since:
-                continue
-            seen.add(tid)
-            seconds = max(0, int(now - self._phone_since[tid]))
-            statuses.append({
-                "tracker_id": tid,
-                "active": True,
-                "seconds": seconds,
-                "limit": limit,
-                "exceeded": bool(limit is not None and seconds >= limit),
-                "bbox": [float(value) for value in matched],
-                "employee_id": self._employee_id_for_tracker(tid),
-            })
-        stale = [tracker for tracker in self._phone_since if tracker not in seen]
-        for tracker in stale:
-            if now - self._phone_hold.get(tracker, 0.0) > PHONE_HOLD_SECONDS:
-                self._phone_since.pop(tracker, None)
-                self._phone_hold.pop(tracker, None)
-                self._phone_boxes.pop(tracker, None)
-        return statuses
-
-    def _draw_phones(self, frame: np.ndarray, phones: list[dict[str, Any]]) -> np.ndarray:
-        labels: list[tuple[str, int, int, tuple[int, int, int], tuple[float, float, float, float]]] = []
-        color = (255, 0, 255)
-        for phone in phones:
-            if not phone.get("active"):
-                continue
-            x1, y1, x2, y2 = (int(value) for value in phone["bbox"])
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            limit = phone.get("limit")
-            text = f"Celular · {int(phone['seconds'])}s"
-            if limit:
-                text = f"{text} / {int(limit)}s"
-            labels.append((text, x1, max(0, y1 - 22), color, tuple(float(value) for value in phone["bbox"])))
-        if not labels:
-            return frame
-        return draw_unicode_labels(frame, layout_detection_labels(labels))
 
     def _class_label(self, class_id: int) -> str:
         names = getattr(self._model, "names", None) if self._model is not None else None
@@ -1150,15 +974,8 @@ class StreamAnalyzer:
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
         detect_started = time.perf_counter()
         people, parts = self._track_people_only(self._run_yolo(frame))
-        phones: list[dict[str, Any]] = []
         if not self.config.mock:
             parts = self._refine_facial_ppe(frame, people, parts)
-            phones = self._observe_smartphones(
-                people,
-                self._phone_boxes_for_frame(frame, time.time()),
-                parts,
-                time.time(),
-            )
         detect_elapsed = time.perf_counter() - detect_started
         self._inference_fps = round(1.0 / detect_elapsed, 1) if detect_elapsed > 0 else 0.0
         zone_hits, dwell_exceeded, zone_dwell = self._zone_status(people, frame.shape[1], frame.shape[0])
@@ -1173,11 +990,6 @@ class StreamAnalyzer:
         if not self.config.mock:
             self._schedule_config()
         state["smartphone"] = dict(self._smartphone)
-        state["smartphones"] = phones
-        for person in state["persons"]:
-            match = next((item for item in phones if item["tracker_id"] == person["tracker_id"]), None)
-            person["smartphone_active"] = bool(match)
-            person["smartphone_seconds"] = int(match["seconds"]) if match else 0
         state["dwell_exceeded"] = dwell_exceeded
         state["zone_dwell"] = zone_dwell
         self._attach_missing_ppe(state)
@@ -1190,7 +1002,6 @@ class StreamAnalyzer:
         annotated = self._annotate(frame, people, missing_labels)
         if len(parts):
             annotated = self._annotate(annotated, parts)
-        annotated = self._draw_phones(annotated, phones)
         annotated = self._draw_zones(annotated, zone_dwell)
         telemetry = dict(state.get("telemetry") or {})
         telemetry["inference_fps"] = self._inference_fps
@@ -1331,26 +1142,6 @@ class StreamAnalyzer:
             ))
             if restricted:
                 posted_restricted = True
-        phone_limit = self._phone_limit()
-        active_phones = [item for item in (state.get("smartphones") or []) if isinstance(item, dict) and item.get("active")]
-        phone_exceeded = [item for item in active_phones if item.get("exceeded")]
-        jev_phone = jev.get("any_smartphone_idle") is True and bool(active_phones)
-        if self._smartphone.get("enabled") and (phone_exceeded or jev_phone):
-            chosen = max(phone_exceeded or active_phones, key=lambda item: int(item.get("seconds") or 0))
-            jobs.append((
-                "smartphone",
-                f"{web}/snitch/episodes/smartphone",
-                {
-                    "enabled": True,
-                    "limit_exceeded": True,
-                    "employee_id": chosen.get("employee_id"),
-                    "location_id": location_id,
-                    "camera_id": self.config.camera_id,
-                    "tracker_id": chosen.get("tracker_id"),
-                    "smartphone_seconds": int(chosen.get("seconds") or 0),
-                    "max_continuous_seconds": phone_limit,
-                },
-            ))
         if jev.get("any_person_in_restricted_zone") is True and not posted_restricted:
             jobs.append((
                 "idle_zone:laya",
@@ -1470,13 +1261,9 @@ class StreamAnalyzer:
             self._tracker_links = {str(key): value for key, value in links.items() if isinstance(value, dict)}
         phone = data.get("smartphone") or {}
         if isinstance(phone, dict):
-            limit = phone.get("max_continuous_seconds")
-            if limit is None:
-                limit = phone.get("hand_limit_seconds")
             self._smartphone = {
                 "enabled": bool(phone.get("enabled")),
-                "hand_limit_seconds": limit,
-                "max_continuous_seconds": limit,
+                "hand_limit_seconds": phone.get("hand_limit_seconds"),
             }
         zones: list[ZoneConfig] = []
         for item in data.get("zones") or []:
