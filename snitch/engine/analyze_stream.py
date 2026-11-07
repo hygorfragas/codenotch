@@ -410,6 +410,12 @@ class StreamAnalyzer:
         self._phone_model = None
         self._phone_backend: str | None = None
         self._phone_unavailable = False
+        self._phone_models: dict[str, Any] = {}
+        self._phone_backends: dict[str, str] = {}
+        self._phone_missing: set[str] = set()
+        self._phone_candidates: dict[int, float] = {}
+        self._pose_at: dict[int, float] = {}
+        self._pose_clock = 0.0
         self._phone_at = 0.0
         self._phone_cursor = 0
         self._phone_seen: dict[int, float] = {}
@@ -1316,56 +1322,55 @@ class StreamAnalyzer:
                 found.append(label)
         return found
 
-    def _coco_weights(self) -> Path | None:
-        configured = os.environ.get("COCO_WEIGHTS", "").strip()
-        candidates = [Path(configured)] if configured else []
-        candidates.append(self.config.weights_path.with_name("yolov8s.pt"))
-        candidates.append(self.config.weights_path.with_name("yolov8n-coco.pt"))
-        for candidate in candidates:
-            if candidate.is_file():
-                return candidate
-        return None
+    def _phone_weights(self, kind: str) -> Path | None:
+        name = "yolov8n-coco.pt" if kind == "n" else "yolov8s.pt"
+        path = self.config.weights_path.with_name(name)
+        return path if path.is_file() else None
 
-    def _load_phone_model(self) -> bool:
-        if self._phone_model is not None:
+    def _load_phone_model(self, kind: str) -> bool:
+        if kind in self._phone_models:
             return True
-        if self._phone_unavailable:
+        if kind in self._phone_missing:
             return False
-        weights = self._coco_weights()
+        weights = self._phone_weights(kind)
         if weights is None:
-            self._phone_unavailable = True
+            self._phone_missing.add(kind)
             return False
         try:
             if self._backend == "coreml" or coreml_requested():
                 package = _ensure_coreml_package(weights, imgsz=320)
-                self._phone_model = _import_yolo()(str(package))
-                self._phone_backend = "coreml"
+                model = _import_yolo()(str(package))
+                self._warm_predict(model, "coreml", 320)
+                self._phone_models[kind] = model
+                self._phone_backends[kind] = "coreml"
                 return True
         except Exception as exc:  # noqa: BLE001
             print(f"CoreML do celular indisponível ({exc}); usando PyTorch.", file=sys.stderr, flush=True)
         try:
-            self._phone_model = _import_yolo()(str(weights))
+            model = _import_yolo()(str(weights))
             device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
-            self._phone_model.to(device)
-            self._phone_backend = "pytorch"
+            model.to(device)
+            self._warm_predict(model, "pytorch", 320)
+            self._phone_models[kind] = model
+            self._phone_backends[kind] = "pytorch"
             return True
         except Exception as exc:  # noqa: BLE001
             print(f"Detector de celular indisponível ({exc}).", file=sys.stderr, flush=True)
-            self._phone_unavailable = True
+            self._phone_missing.add(kind)
             return False
 
-    def _phone_boxes(self, crop: np.ndarray) -> list[np.ndarray]:
-        if not self._load_phone_model():
+    def _phone_boxes(self, crop: np.ndarray, kind: str, confidence: float) -> list[np.ndarray]:
+        if not self._load_phone_model(kind):
             return []
-        assert self._phone_model is not None
-        if self._phone_backend == "coreml":
-            result = self._phone_model(crop, verbose=False, conf=0.25, imgsz=320)[0]
+        model = self._phone_models[kind]
+        if self._phone_backends.get(kind) == "coreml":
+            result = model(crop, verbose=False, conf=confidence, imgsz=320)[0]
         else:
             device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
-            result = self._phone_model(crop, verbose=False, conf=0.25, imgsz=320, device=device)[0]
+            result = model(crop, verbose=False, conf=confidence, imgsz=320, device=device)[0]
         if result.boxes is None or len(result.boxes) == 0:
             return []
-        names = getattr(self._phone_model, "names", {}) or {}
+        names = getattr(model, "names", {}) or {}
         found: list[np.ndarray] = []
         for box, class_id in zip(result.boxes.xyxy.cpu().numpy(), result.boxes.cls.cpu().numpy()):
             label = str(names.get(int(class_id), class_id)).lower().replace(" ", "")
@@ -1387,29 +1392,42 @@ class StreamAnalyzer:
 
     def _watch_phone(self, frame: np.ndarray, people, parts) -> None:
         self._phone_crop = None
+        now = time.time()
+        self._phone_candidates = {
+            tracker_id: until
+            for tracker_id, until in self._phone_candidates.items()
+            if until > now
+        }
         if not self._smartphone.get("enabled"):
             return
         if people.tracker_id is None or len(people) == 0:
             return
-        now = time.time()
         indexes = [index for index, tracker_id in enumerate(people.tracker_id) if tracker_id is not None]
-        if indexes and now - self._phone_at >= 0.5:
-            self._phone_at = now
-            index = indexes[self._phone_cursor % len(indexes)]
-            self._phone_cursor += 1
-            tracker_id = int(people.tracker_id[index])
-            found = self._look_for_phone(frame, people.xyxy[index], tracker_id, parts, now)
-            votes = self._phone_votes.setdefault(tracker_id, deque(maxlen=VOTE_WINDOW))
-            votes.append(found)
+        if not indexes or now - self._phone_at < 0.5:
+            return
+        self._phone_at = now
+        index = indexes[self._phone_cursor % len(indexes)]
+        self._phone_cursor += 1
+        tracker_id = int(people.tracker_id[index])
+        person_box = people.xyxy[index]
+        found = False
+        if self._scan_phone(frame, person_box, parts, "n", 0.20) is not None:
+            confirmed = self._scan_phone(frame, person_box, parts, "s", 0.25)
+            if confirmed is not None:
+                found = True
+                self._phone_candidates[tracker_id] = now + 0.6
+                self._remember_phone(tracker_id, confirmed, parts, person_box, now)
+        votes = self._phone_votes.setdefault(tracker_id, deque(maxlen=VOTE_WINDOW))
+        votes.append(found)
 
-    def _look_for_phone(self, frame: np.ndarray, person_box: np.ndarray, tracker_id: int, parts, now: float) -> bool:
+    def _scan_phone(self, frame: np.ndarray, person_box: np.ndarray, parts, kind: str, confidence: float) -> np.ndarray | None:
         height, width = frame.shape[:2]
         x1 = max(0, int(person_box[0]))
         y1 = max(0, int(person_box[1]))
         x2 = min(width, int(person_box[2]))
         y2 = min(height, int(person_box[3]))
         if x2 - x1 < 12 or y2 - y1 < 12:
-            return False
+            return None
         crop = frame[y1:y2, x1:x2]
         resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_LINEAR)
         scale_x = (x2 - x1) / 320
@@ -1417,23 +1435,27 @@ class StreamAnalyzer:
         hands = self._body_boxes(person_box, parts, {"hand"})
         faces = self._body_boxes(person_box, parts, {"face"})
         heads = self._body_boxes(person_box, parts, {"head"})
-        for box in self._phone_boxes(resized):
+        for box in self._phone_boxes(resized, kind, confidence):
             mapped = np.array([
                 x1 + float(box[0]) * scale_x,
                 y1 + float(box[1]) * scale_y,
                 x1 + float(box[2]) * scale_x,
                 y1 + float(box[3]) * scale_y,
             ], dtype=np.float32)
-            where = phone_near_body(mapped, hands, faces, heads)
-            if where is None:
+            if phone_near_body(mapped, hands, faces, heads) is None:
                 continue
-            self._phone_seen[tracker_id] = now
-            self._phone_where = where
-            self._phone_holder = tracker_id
-            center = ((float(mapped[0]) + float(mapped[2])) / 2, (float(mapped[1]) + float(mapped[3])) / 2)
-            self._phone_centers[tracker_id] = center
-            return True
-        return False
+            return mapped
+        return None
+
+    def _remember_phone(self, tracker_id: int, box: np.ndarray, parts, person_box: np.ndarray, now: float) -> None:
+        hands = self._body_boxes(person_box, parts, {"hand"})
+        faces = self._body_boxes(person_box, parts, {"face"})
+        heads = self._body_boxes(person_box, parts, {"head"})
+        where = phone_near_body(box, hands, faces, heads) or "hand"
+        self._phone_seen[tracker_id] = now
+        self._phone_where = where
+        self._phone_holder = tracker_id
+        self._phone_centers[tracker_id] = ((float(box[0]) + float(box[2])) / 2, (float(box[1]) + float(box[3])) / 2)
 
     def _ask_phone_use(self, frame: np.ndarray, people) -> None:
         if not self.config.jev_url or getattr(self, "_phone_ask_inflight", False):
@@ -1537,9 +1559,10 @@ class StreamAnalyzer:
             return False
         try:
             if self._backend == "coreml" or coreml_requested():
-                package = _ensure_coreml_package(weights, imgsz=640)
+                package = _ensure_coreml_package(weights, imgsz=160)
                 self._pose_model = _import_yolo()(str(package))
                 self._pose_backend = "coreml"
+                self._warm_predict(self._pose_model, "coreml", 160)
                 return True
         except Exception as exc:  # noqa: BLE001
             print(f"CoreML da pose indisponível ({exc}); usando PyTorch.", file=sys.stderr, flush=True)
@@ -1548,45 +1571,88 @@ class StreamAnalyzer:
             device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
             self._pose_model.to(device)
             self._pose_backend = "pytorch"
+            self._warm_predict(self._pose_model, "pytorch", 160)
             return True
         except Exception as exc:  # noqa: BLE001
             print(f"Pose indisponível ({exc}).", file=sys.stderr, flush=True)
             self._pose_unavailable = True
             return False
 
-    def _poses(self, frame: np.ndarray, people) -> dict[int, dict[str, Any]]:
-        # A pose inteira custa cerca de 14 ms. Em um quadro sim e outro não, o p5 fica acima de 15 FPS.
-        if self._frame_index % 2 == 1 and self._pose_cache:
-            return self._pose_cache
-        if people.tracker_id is None or not self._load_pose_model():
+    def _warm_predict(self, model: Any, backend: str, imgsz: int) -> None:
+        blank = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+        if backend == "coreml":
+            model(blank, verbose=False, conf=0.25, imgsz=imgsz)
+            return
+        device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
+        model(blank, verbose=False, conf=0.25, imgsz=imgsz, device=device)
+
+    def _pose_wanted(self, tracker_id: int, person_box: np.ndarray, parts) -> bool:
+        now = time.time()
+        phone = tracker_id in self._phone_candidates
+        if now - self._pose_clock < (0.25 if phone else 1.0):
+            return False
+        if phone:
+            return True
+        if self._head_height(person_box, parts) < 110:
+            return False
+        part_for = {
+            "helmet": "head",
+            "goggles": "face",
+            "mask": "face",
+            "ear_protection": "ear",
+            "gloves": "hand",
+        }
+        for label in self.config.required_ppe:
+            part = part_for.get(label)
+            if part and not self._body_boxes(person_box, parts, {part}):
+                return True
+        return False
+
+    def _poses(self, frame: np.ndarray, people, parts) -> dict[int, dict[str, Any]]:
+        if people.tracker_id is None or len(people) == 0:
+            return {}
+        wanted = [
+            index
+            for index, tracker_id in enumerate(people.tracker_id)
+            if tracker_id is not None and self._pose_wanted(int(tracker_id), people.xyxy[index], parts)
+        ]
+        if not wanted or not self._load_pose_model():
             return {}
         assert self._pose_model is not None
-        if self._pose_backend == "coreml":
-            result = self._pose_model(frame, verbose=False, conf=0.25, imgsz=640)[0]
-        else:
-            device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
-            result = self._pose_model(frame, verbose=False, conf=0.25, imgsz=640, device=device)[0]
-        if result.keypoints is None or result.boxes is None or len(result.boxes) == 0:
-            return {}
-        xy = result.keypoints.xy.cpu().numpy()
-        conf = result.keypoints.conf
-        conf_np = conf.cpu().numpy() if conf is not None else None
-        boxes = result.boxes.xyxy.cpu().numpy()
+        height, width = frame.shape[:2]
         found: dict[int, dict[str, Any]] = {}
-        for index, tracker_id in enumerate(people.tracker_id):
+        for index in wanted:
+            tracker_id = people.tracker_id[index]
             if tracker_id is None:
                 continue
-            person_box = people.xyxy[index]
-            best = None
-            for key_index, box in enumerate(boxes):
-                if self._center_inside(box, person_box):
-                    best = key_index
-                    break
-            if best is None:
+            self._pose_clock = time.time()
+            self._pose_at[int(tracker_id)] = self._pose_clock
+            box = people.xyxy[index]
+            x1 = max(0, int(box[0]))
+            y1 = max(0, int(box[1]))
+            x2 = min(width, int(box[2]))
+            y2 = min(height, int(box[3]))
+            if x2 - x1 < 12 or y2 - y1 < 12:
                 continue
-            scores = None if conf_np is None else conf_np[best]
-            found[int(tracker_id)] = describe_pose(xy[best], scores)
-        self._pose_cache = found
+            crop = frame[y1:y2, x1:x2]
+            if self._pose_backend == "coreml":
+                result = self._pose_model(crop, verbose=False, conf=0.25, imgsz=160)[0]
+            else:
+                device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
+                result = self._pose_model(crop, verbose=False, conf=0.25, imgsz=160, device=device)[0]
+            if result.keypoints is None or result.boxes is None or len(result.boxes) == 0:
+                continue
+            boxes = result.boxes.xyxy.cpu().numpy()
+            areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+            best = int(np.argmax(areas))
+            xy = result.keypoints.xy.cpu().numpy()[best].copy()
+            xy[:, 0] += x1
+            xy[:, 1] += y1
+            conf = result.keypoints.conf
+            scores = None if conf is None else conf.cpu().numpy()[best]
+            described = describe_pose(xy, scores)
+            described["ran"] = True
+            found[int(tracker_id)] = described
         return found
 
     def _head_height(self, person_box: np.ndarray, parts) -> float:
@@ -1615,14 +1681,20 @@ class StreamAnalyzer:
         votes = self._fact_votes.setdefault((tracker_id, label), deque(maxlen=VOTE_WINDOW))
         votes.append(present and (on_part or label in {"vest", "harness"}))
         part_name = {"helmet": "head", "goggles": "face", "ear_protection": "ear", "earplug": "ear", "gloves": "hand", "mask": "face", "boots": "foot"}.get(label, "torso")
-        part_visible = {
-            "head": not pose.get("occluded", False),
-            "face": bool(pose.get("face_visible")),
-            "ear": bool(pose.get("ear_visible")),
-            "hand": bool(pose.get("hand_visible")) or bool(self._body_boxes(person_box, parts, {"hand"})),
-            "foot": True,
-            "torso": True,
-        }.get(part_name, True)
+        box_name = {"head": "head", "face": "face", "ear": "ear", "hand": "hand"}.get(part_name)
+        if part_name in {"torso", "foot"}:
+            part_visible = True
+        elif box_name and self._body_boxes(person_box, parts, {box_name}):
+            part_visible = True
+        elif pose.get("ran"):
+            part_visible = {
+                "head": not pose.get("occluded", True),
+                "face": bool(pose.get("face_visible")),
+                "ear": bool(pose.get("ear_visible")),
+                "hand": bool(pose.get("hand_visible")),
+            }.get(part_name, False)
+        else:
+            part_visible = False
         return {
             "conf": round(conf, 3),
             "on_part": on_part or label in {"vest", "harness"},
@@ -1657,7 +1729,7 @@ class StreamAnalyzer:
         if people.tracker_id is None or len(people) == 0:
             self._facts = {"persons": []}
             return
-        poses = self._poses(frame, people)
+        poses = self._poses(frame, people, parts)
         persons = []
         limit = self._smartphone.get("hand_limit_seconds")
         try:
@@ -1670,7 +1742,18 @@ class StreamAnalyzer:
                 continue
             tid = int(tracker_id)
             person_box = people.xyxy[index]
-            pose = poses.get(tid, {"occluded": False, "yaw": "unknown", "face_visible": False, "ear_visible": False, "hand_visible": False, "wrists": [], "ears": [], "nose": None, "eyes": []})
+            pose = poses.get(tid) or {
+                "ran": False,
+                "occluded": False,
+                "yaw": "unknown",
+                "face_visible": False,
+                "ear_visible": False,
+                "hand_visible": False,
+                "wrists": [],
+                "ears": [],
+                "nose": None,
+                "eyes": [],
+            }
             head_height = self._head_height(person_box, parts)
             items = {
                 label: self._item_facts(tid, label, person_box, parts, pose)
@@ -1681,7 +1764,7 @@ class StreamAnalyzer:
             persons.append({
                 "tracker_id": tid,
                 "head_height_px": round(head_height, 1),
-                "head_occluded": bool(pose.get("occluded")),
+                "head_occluded": bool(pose.get("ran") and pose.get("occluded")),
                 "head_yaw": pose.get("yaw", "unknown"),
                 "items": items,
                 "phone": self._phone_facts(tid, pose, head_height) if self._smartphone.get("enabled") else {"votes_present": 0, "votes_window": 1},
