@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -111,10 +112,31 @@ ZONE_MIN_OVERLAP = 0.15
 YOLO_BASE_CONF = 0.10
 STRONG_CLASS_CONF = 0.25
 SMALL_PPE_CONF = 0.10
-PPE_MEMORY_SECONDS = 2.2
 GLASSES_ZOOM_INTERVAL = 0.6
+VOTE_WINDOW = 5
+VOTE_NEED = 3
+PPE_NMS_IOU = 0.40
 SMALL_PPE_LABELS = frozenset({"goggles", "ear_protection", "mask", "gloves", "face-guard"})
 CROP_PPE_LABELS = frozenset({"goggles", "helmet", "mask", "ear_protection", "face-guard"})
+VOTED_PPE_LABELS = frozenset({"goggles", "ear_protection", "gloves"})
+
+
+def dynamic_min_confidence(label: str, span: float) -> float:
+    """Cabeça ou mão pequena (longe) exige mais confiança. Perto, o limiar desce."""
+    clamped = (float(span) - 36.0) / (160.0 - 36.0)
+    if clamped < 0.0:
+        clamped = 0.0
+    elif clamped > 1.0:
+        clamped = 1.0
+    if label == "goggles":
+        high, low = 0.42, 0.16
+    elif label == "ear_protection":
+        high, low = 0.40, 0.18
+    elif label == "gloves":
+        high, low = 0.35, 0.15
+    else:
+        return SMALL_PPE_CONF
+    return high - clamped * (high - low)
 _BUNDLED_FONT = Path(__file__).resolve().parent / "fonts" / "DejaVuSans-Bold.ttf"
 FONT_CANDIDATES: tuple[Path, ...] = (
     _BUNDLED_FONT,
@@ -350,6 +372,8 @@ class StreamAnalyzer:
         self._occupancy: dict[tuple[str, int, str], dict[str, Any]] = {}
         self._device = "cpu"
         self._ppe_memory: dict[tuple[int, str], dict[str, Any]] = {}
+        self._ppe_votes: dict[tuple[int, str], deque[bool]] = {}
+        self._vote_at: dict[int, float] = {}
         self._roi_at: dict[int, float] = {}
         self._inference_fps = 0.0
 
@@ -437,8 +461,174 @@ class StreamAnalyzer:
             )
         ]
         if not keep:
+            filtered = self._empty_detections()
+        else:
+            filtered = detections[keep]
+        return self._per_class_nms(self._associate_ppe(filtered))
+
+    def _box_span(self, box: np.ndarray) -> float:
+        return max(float(box[2]) - float(box[0]), float(box[3]) - float(box[1]), 1.0)
+
+    def _indices_for(self, detections, labels: set[str]) -> dict[str, list[int]]:
+        grouped: dict[str, list[int]] = {label: [] for label in labels}
+        if detections.class_id is None:
+            return grouped
+        for index, class_id in enumerate(detections.class_id):
+            label = self._class_label(int(class_id))
+            if label in grouped:
+                grouped[label].append(index)
+        return grouped
+
+    def _first_containing(self, detections, indices: list[int], cx: float, cy: float) -> np.ndarray | None:
+        point = np.array([cx, cy, cx, cy], dtype=np.float32)
+        for index in indices:
+            box = detections.xyxy[index]
+            if self._center_inside(point, box):
+                return box
+        return None
+
+    def _on_a_person(self, box: np.ndarray, person_boxes: list[np.ndarray]) -> bool:
+        if not person_boxes:
+            return True
+        return any(self._center_inside(box, person) for person in person_boxes)
+
+    def _anchor_for_ppe(self, label: str, box: np.ndarray, detections, grouped, person_boxes: list[np.ndarray]) -> np.ndarray | None:
+        cx = (float(box[0]) + float(box[2])) / 2
+        cy = (float(box[1]) + float(box[3])) / 2
+        if label == "goggles":
+            for kind in ("face", "head"):
+                anchor = self._first_containing(detections, grouped.get(kind, []), cx, cy)
+                if anchor is not None and self._on_a_person(anchor, person_boxes):
+                    return anchor
+            return None
+        if label == "ear_protection":
+            for kind in ("head", "ear"):
+                anchor = self._first_containing(detections, grouped.get(kind, []), cx, cy)
+                if anchor is not None and self._on_a_person(anchor, person_boxes):
+                    return anchor
+            return None
+        if label == "gloves":
+            anchor = self._first_containing(detections, grouped.get("hand", []), cx, cy)
+            if anchor is not None and self._on_a_person(anchor, person_boxes):
+                return anchor
+            return None
+        return None
+
+    def _ppe_size_ok(self, label: str, box: np.ndarray, anchor: np.ndarray) -> bool:
+        width = float(box[2]) - float(box[0])
+        height = float(box[3]) - float(box[1])
+        anchor_w = max(float(anchor[2]) - float(anchor[0]), 1.0)
+        anchor_h = max(float(anchor[3]) - float(anchor[1]), 1.0)
+        if width < 1 or height < 1:
+            return False
+        if label == "goggles":
+            return 0.12 * anchor_w <= width <= 1.25 * anchor_w and height <= 0.9 * anchor_h
+        if label == "ear_protection":
+            return 0.08 * anchor_w <= width <= 1.05 * anchor_w and height <= 1.05 * anchor_h
+        if label == "gloves":
+            area = width * height
+            anchor_area = anchor_w * anchor_h
+            return 0.1 * anchor_area <= area <= 4.0 * anchor_area
+        return True
+
+    def _associate_ppe(self, detections):
+        if detections.class_id is None or len(detections) == 0:
+            return detections
+        grouped = self._indices_for(detections, {"person", "head", "face", "ear", "hand"})
+        person_boxes = [detections.xyxy[index] for index in grouped["person"]]
+        keep: list[int] = []
+        for index, class_id in enumerate(detections.class_id):
+            label = self._class_label(int(class_id))
+            if label not in VOTED_PPE_LABELS:
+                keep.append(index)
+                continue
+            box = detections.xyxy[index]
+            anchor = self._anchor_for_ppe(label, box, detections, grouped, person_boxes)
+            if anchor is None or not self._ppe_size_ok(label, box, anchor):
+                continue
+            if float(detections.confidence[index]) < dynamic_min_confidence(label, self._box_span(anchor)):
+                continue
+            keep.append(index)
+        if not keep:
             return self._empty_detections()
         return detections[keep]
+
+    def _iou_one_to_many(self, box: np.ndarray, boxes: np.ndarray) -> np.ndarray:
+        x1 = np.maximum(float(box[0]), boxes[:, 0])
+        y1 = np.maximum(float(box[1]), boxes[:, 1])
+        x2 = np.minimum(float(box[2]), boxes[:, 2])
+        y2 = np.minimum(float(box[3]), boxes[:, 3])
+        inter = np.maximum(0.0, x2 - x1) * np.maximum(0.0, y2 - y1)
+        area_box = max(0.0, float(box[2]) - float(box[0])) * max(0.0, float(box[3]) - float(box[1]))
+        area_many = np.maximum(0.0, boxes[:, 2] - boxes[:, 0]) * np.maximum(0.0, boxes[:, 3] - boxes[:, 1])
+        union = area_box + area_many - inter
+        return np.where(union > 0, inter / union, 0.0)
+
+    def _per_class_nms(self, detections):
+        if detections.class_id is None or len(detections) == 0:
+            return detections
+        grouped: dict[int, list[int]] = {}
+        for index, class_id in enumerate(detections.class_id):
+            grouped.setdefault(int(class_id), []).append(index)
+        keep: list[int] = []
+        for indices in grouped.values():
+            if len(indices) == 1:
+                keep.append(indices[0])
+                continue
+            boxes = np.array([detections.xyxy[index] for index in indices], dtype=np.float32)
+            scores = np.array([float(detections.confidence[index]) for index in indices], dtype=np.float32)
+            order = np.argsort(-scores)
+            chosen: list[int] = []
+            while order.size:
+                current = int(order[0])
+                chosen.append(current)
+                if order.size == 1:
+                    break
+                rest = order[1:]
+                order = rest[self._iou_one_to_many(boxes[current], boxes[rest]) < PPE_NMS_IOU]
+            for local in chosen:
+                keep.append(indices[local])
+        keep.sort()
+        return detections[keep]
+
+    def _vote_confirmed(self, tracker_id: int, label: str) -> bool:
+        history = self._ppe_votes.get((tracker_id, label))
+        if not history:
+            return False
+        return sum(1 for seen in history if seen) >= VOTE_NEED
+
+    def _push_vote(
+        self,
+        tracker_id: int,
+        label: str,
+        present: bool,
+        box: np.ndarray | None,
+        anchor: np.ndarray | None,
+        class_id: int | None,
+        now: float,
+    ) -> bool:
+        history = self._ppe_votes.setdefault((tracker_id, label), deque(maxlen=VOTE_WINDOW))
+        history.append(bool(present))
+        self._vote_at[tracker_id] = now
+        if present and box is not None and anchor is not None and class_id is not None:
+            self._remember_ppe(tracker_id, label, box, anchor, class_id, now)
+        return self._vote_confirmed(tracker_id, label)
+
+    def _seed_vote(
+        self,
+        tracker_id: int,
+        label: str,
+        box: np.ndarray,
+        anchor: np.ndarray,
+        class_id: int,
+        now: float,
+    ) -> None:
+        history = self._ppe_votes.setdefault((tracker_id, label), deque(maxlen=VOTE_WINDOW))
+        history.clear()
+        for _ in range(VOTE_NEED):
+            history.append(True)
+        self._vote_at[tracker_id] = now
+        self._remember_ppe(tracker_id, label, box, anchor, class_id, now)
 
     def _class_id_for(self, label: str) -> int | None:
         names = getattr(self._model, "names", None) if self._model is not None else None
@@ -463,7 +653,6 @@ class StreamAnalyzer:
         width = max(ax2 - ax1, 1.0)
         height = max(ay2 - ay1, 1.0)
         self._ppe_memory[(tracker_id, label)] = {
-            "until": now + PPE_MEMORY_SECONDS,
             "class_id": int(class_id),
             "rel": (
                 (float(box[0]) - ax1) / width,
@@ -480,9 +669,10 @@ class StreamAnalyzer:
         anchor: np.ndarray,
         now: float,
     ) -> tuple[list[float], int] | None:
+        if not self._vote_confirmed(tracker_id, label):
+            return None
         record = self._ppe_memory.get((tracker_id, label))
-        if record is None or now > float(record["until"]):
-            self._ppe_memory.pop((tracker_id, label), None)
+        if record is None:
             return None
         ax1, ay1, ax2, ay2 = (float(value) for value in anchor)
         width = max(ax2 - ax1, 1.0)
@@ -589,51 +779,118 @@ class StreamAnalyzer:
         required = set(self.config.required_ppe)
         return "goggles" in required or "glasses" in required
 
+    def _owned_voted_parts(self, person_box: np.ndarray, parts) -> dict[str, tuple[np.ndarray, int, float, int]]:
+        owned: dict[str, tuple[np.ndarray, int, float, int]] = {}
+        if parts is None or parts.class_id is None:
+            return owned
+        for part_index, class_id in enumerate(parts.class_id):
+            label = self._class_label(int(class_id))
+            if label not in VOTED_PPE_LABELS:
+                continue
+            box = parts.xyxy[part_index]
+            if not self._center_inside(box, person_box):
+                continue
+            confidence = float(parts.confidence[part_index]) if parts.confidence is not None else 0.0
+            current = owned.get(label)
+            if current is None or confidence >= current[2]:
+                owned[label] = (box, int(class_id), confidence, part_index)
+        return owned
+
+    def _vote_anchor(self, label: str, person_box: np.ndarray, parts, box: np.ndarray | None) -> np.ndarray | None:
+        if label != "gloves":
+            return self._facial_anchor(person_box, parts)
+        hands: list[np.ndarray] = []
+        if parts is not None and parts.class_id is not None:
+            for index, class_id in enumerate(parts.class_id):
+                if self._class_label(int(class_id)) != "hand":
+                    continue
+                hand = parts.xyxy[index]
+                if self._center_inside(hand, person_box):
+                    hands.append(hand)
+        if box is not None:
+            for hand in hands:
+                if self._center_inside(box, hand):
+                    return hand
+        if hands:
+            return hands[0]
+        return None
+
     def _refine_facial_ppe(self, frame: np.ndarray, people, parts):
         if people.tracker_id is None or len(people) == 0:
             return parts
         now = time.time()
         added: list[tuple[list[float], int, float]] = []
-        pending_zoom: tuple[int, np.ndarray, np.ndarray] | None = None
+        drop: set[int] = set()
+        owned_by: set[int] = set()
+        observations: list[tuple[int, np.ndarray, dict[str, tuple[np.ndarray, int, float, int]]]] = []
+        zoom_target: tuple[int, np.ndarray] | None = None
         for index, tracker_id in enumerate(people.tracker_id):
             if tracker_id is None:
                 continue
             tid = int(tracker_id)
             person_box = people.xyxy[index]
-            anchor = self._facial_anchor(person_box, parts)
-            present = self._labels_inside(person_box, parts)
-            for label in CROP_PPE_LABELS:
-                if label in present:
-                    continue
-                recalled = self._recall_ppe(tid, label, anchor, now)
-                if recalled is None:
-                    continue
-                box, class_id = recalled
-                added.append((box, class_id, 0.2))
-                present.add(label)
-            if parts.class_id is not None:
-                for part_index, class_id in enumerate(parts.class_id):
-                    label = self._class_label(int(class_id))
-                    if label not in CROP_PPE_LABELS:
-                        continue
-                    if self._center_inside(parts.xyxy[part_index], person_box):
-                        self._remember_ppe(tid, label, parts.xyxy[part_index], anchor, int(class_id), now)
+            owned = self._owned_voted_parts(person_box, parts)
+            for payload in owned.values():
+                owned_by.add(payload[3])
+            observations.append((tid, person_box, owned))
+            history = self._ppe_votes.get((tid, "goggles"))
+            misses = 0 if history is None else sum(1 for seen in history if not seen)
             if (
-                pending_zoom is None
+                zoom_target is None
                 and self._glasses_required()
-                and "goggles" not in present
+                and "goggles" not in owned
+                and history is not None
+                and len(history) >= VOTE_WINDOW - 1
+                and misses >= VOTE_NEED
                 and now - self._roi_at.get(-1, 0.0) >= GLASSES_ZOOM_INTERVAL
             ):
-                pending_zoom = (tid, person_box, anchor)
-        if pending_zoom is not None:
-            tid, _person_box, anchor = pending_zoom
+                zoom_target = (tid, self._facial_anchor(person_box, parts))
+        zoom_tid: int | None = None
+        glasses_seeded = False
+        if zoom_target is not None:
+            zoom_tid, anchor = zoom_target
             self._roi_at[-1] = now
             for box, class_id, confidence, label in self._infer_crop(frame, anchor):
-                added.append((box, class_id, confidence))
-                self._remember_ppe(tid, label, np.array(box), anchor, class_id, now)
-        expired = [key for key, record in self._ppe_memory.items() if now > float(record["until"])]
-        for key in expired:
-            self._ppe_memory.pop(key, None)
+                if label == "goggles" and confidence >= dynamic_min_confidence("goggles", self._box_span(anchor)):
+                    found = np.array(box, dtype=np.float32)
+                    self._seed_vote(zoom_tid, "goggles", found, anchor, class_id, now)
+                    added.append((found.tolist(), class_id, confidence))
+                    glasses_seeded = True
+                    break
+                if label not in VOTED_PPE_LABELS:
+                    added.append((box, class_id, confidence))
+        for tid, person_box, owned in observations:
+            for label in VOTED_PPE_LABELS:
+                if glasses_seeded and label == "goggles" and tid == zoom_tid:
+                    continue
+                found = owned.get(label)
+                if found is None:
+                    anchor = self._vote_anchor(label, person_box, parts, None)
+                    if self._push_vote(tid, label, False, None, None, None, now) and anchor is not None:
+                        recalled = self._recall_ppe(tid, label, anchor, now)
+                        if recalled is not None:
+                            box, class_id = recalled
+                            added.append((box, class_id, 0.2))
+                    continue
+                box, class_id, _confidence, part_index = found
+                anchor = self._vote_anchor(label, person_box, parts, box)
+                if anchor is None:
+                    anchor = self._facial_anchor(person_box, parts)
+                if not self._push_vote(tid, label, True, box, anchor, class_id, now):
+                    drop.add(part_index)
+        if parts is not None and parts.class_id is not None:
+            for part_index, class_id in enumerate(parts.class_id):
+                if self._class_label(int(class_id)) in VOTED_PPE_LABELS and part_index not in owned_by:
+                    drop.add(part_index)
+            if drop:
+                keep = [index for index in range(len(parts)) if index not in drop]
+                parts = parts[keep] if keep else self._empty_detections()
+        stale = [tid for tid, seen in self._vote_at.items() if now - seen > 8.0]
+        for tid in stale:
+            self._vote_at.pop(tid, None)
+            for key in [key for key in self._ppe_votes if key[0] == tid]:
+                self._ppe_votes.pop(key, None)
+                self._ppe_memory.pop(key, None)
         return self._append_detections(parts, added)
 
     def _class_label(self, class_id: int) -> str:

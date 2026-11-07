@@ -31,16 +31,16 @@ def _detections(boxes, classes, confidences):
     )
 
 
-def test_low_confidence_glasses_stay_when_inside_a_person():
+def test_glasses_stay_only_on_the_face_of_the_same_person():
     analyzer = _analyzer()
     detections = _detections(
-        [[10, 10, 200, 400], [40, 40, 90, 70], [400, 10, 460, 40]],
-        [0, 1, 1],
-        [0.4, 0.12, 0.12],
+        [[10, 10, 220, 420], [40, 40, 120, 130], [48, 70, 100, 96], [400, 10, 460, 40]],
+        [0, 2, 1, 1],
+        [0.9, 0.9, 0.4, 0.9],
     )
     kept = analyzer._filter_by_class_confidence(detections)
     labels = [analyzer._class_label(int(class_id)) for class_id in kept.class_id]
-    assert labels == ["person", "goggles"]
+    assert labels == ["person", "head", "goggles"]
 
 
 def test_person_below_strong_threshold_is_dropped():
@@ -50,18 +50,23 @@ def test_person_below_strong_threshold_is_dropped():
     assert len(kept) == 0
 
 
-def test_glasses_memory_follows_the_head_for_two_seconds():
+def test_glasses_follow_the_head_only_after_a_majority():
     analyzer = _analyzer()
     anchor = np.array([100, 40, 180, 120], dtype=np.float32)
     glasses = np.array([120, 70, 160, 90], dtype=np.float32)
-    analyzer._remember_ppe(1, "goggles", glasses, anchor, class_id=1, now=10.0)
+    analyzer._push_vote(1, "goggles", True, glasses, anchor, 1, 10.0)
+    analyzer._push_vote(1, "goggles", True, glasses, anchor, 1, 10.0)
+    assert analyzer._recall_ppe(1, "goggles", anchor, 10.0) is None
+    analyzer._push_vote(1, "goggles", True, glasses, anchor, 1, 10.0)
     moved = np.array([110, 50, 190, 130], dtype=np.float32)
-    recalled = analyzer._recall_ppe(1, "goggles", moved, now=12.0)
+    recalled = analyzer._recall_ppe(1, "goggles", moved, 10.0)
     assert recalled is not None
     box, class_id = recalled
     assert class_id == 1
     assert box[0] > 110
-    assert analyzer._recall_ppe(1, "goggles", moved, now=12.3) is None
+    for _ in range(3):
+        analyzer._push_vote(1, "goggles", False, None, None, None, 10.0)
+    assert analyzer._recall_ppe(1, "goggles", moved, 10.0) is None
 
 
 def test_overlapping_labels_move_the_smaller_box():

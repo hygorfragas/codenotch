@@ -1,5 +1,4 @@
 import sys
-import time
 from pathlib import Path
 
 import numpy as np
@@ -21,6 +20,16 @@ def _people(tracker_id: int):
     )
 
 
+def _glasses():
+    import supervision as sv
+
+    return sv.Detections(
+        xyxy=np.array([[50, 30, 90, 55]], dtype=np.float32),
+        class_id=np.array([6]),
+        confidence=np.array([0.8], dtype=np.float32),
+    )
+
+
 def _analyzer():
     analyzer = StreamAnalyzer(AnalyzeStreamConfig(mock=True, required_ppe=("goggles",)))
     calls: list[int] = []
@@ -28,12 +37,26 @@ def _analyzer():
     return analyzer, calls
 
 
-def test_remembered_glasses_do_not_launch_another_zoom():
+def test_one_frame_does_not_confirm_glasses_or_zoom():
     analyzer, calls = _analyzer()
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    anchor = np.array([40, 20, 120, 80], dtype=np.float32)
-    analyzer._remember_ppe(1, "goggles", np.array([50, 30, 90, 50], np.float32), anchor, 6, time.time())
-    updated = analyzer._refine_facial_ppe(frame, _people(1), analyzer._empty_detections())
+    updated = analyzer._refine_facial_ppe(frame, _people(1), _glasses())
+    assert calls == []
+    if updated.class_id is None or len(updated) == 0:
+        return
+    labels = [analyzer._class_label(int(class_id)) for class_id in updated.class_id]
+    assert "goggles" not in labels
+
+
+def test_a_majority_holds_glasses_through_one_miss_without_zoom():
+    analyzer, calls = _analyzer()
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    people = _people(1)
+    glasses = _glasses()
+    for _ in range(3):
+        analyzer._refine_facial_ppe(frame, people, glasses)
+    calls.clear()
+    updated = analyzer._refine_facial_ppe(frame, people, analyzer._empty_detections())
     assert calls == []
     labels = [analyzer._class_label(int(class_id)) for class_id in updated.class_id]
     assert "goggles" in labels
@@ -42,8 +65,8 @@ def test_remembered_glasses_do_not_launch_another_zoom():
 def test_a_new_tracker_id_does_not_zoom_again_inside_the_interval():
     analyzer, calls = _analyzer()
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    analyzer._roi_at[-1] = 0.0
-    analyzer._refine_facial_ppe(frame, _people(1), analyzer._empty_detections())
+    for _ in range(5):
+        analyzer._refine_facial_ppe(frame, _people(1), analyzer._empty_detections())
     assert len(calls) == 1
     calls.clear()
     analyzer._refine_facial_ppe(frame, _people(9), analyzer._empty_detections())
