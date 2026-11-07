@@ -26,9 +26,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from fact_judge import judge_facts
 from jev_client import ask_jev_sync
 from jev_metrics import jev_metrics
 from phone_watch import PhoneClock, PhoneSighting, phone_near_body
+from pose_read import describe_pose, face_toward_phone, nearest
 from state_builder import TrackedPerson, build_jev_state
 
 # Classes SH17 (17 EPIs / partes corporais) — ordem alinhada ao dataset público.
@@ -415,6 +417,19 @@ class StreamAnalyzer:
         self._phone_tracks: list[dict[str, Any]] = []
         self._phone_crop: dict[str, Any] | None = None
         self._phone_clock = PhoneClock(DWELL_GRACE_SECONDS, DWELL_REID_PIXELS)
+        self._pose_model = None
+        self._pose_unavailable = False
+        self._pose_backend: str | None = None
+        self._pose_cache: dict[int, dict[str, Any]] = {}
+        self._fact_votes: dict[tuple[int, str], deque[bool]] = {}
+        self._zoom_status: dict[int, str] = {}
+        self._phone_votes: dict[int, deque[bool]] = {}
+        self._phone_centers: dict[int, tuple[float, float]] = {}
+        self._facts_sig = ""
+        self._judge_at = 0.0
+        self._judge_ok = False
+        self._remote_verdict: dict[str, Any] | None = None
+        self._remote_sig = ""
 
         sv = _import_supervision()
         if not config.mock:
@@ -925,6 +940,7 @@ class StreamAnalyzer:
                     break
                 if label not in VOTED_PPE_LABELS:
                     added.append((box, class_id, confidence))
+            self._zoom_status[zoom_tid] = "found" if glasses_seeded else "missed"
         for tid, person_box, owned in observations:
             for label in VOTED_PPE_LABELS:
                 if glasses_seeded and label == "goggles" and tid == zoom_tid:
@@ -1303,6 +1319,7 @@ class StreamAnalyzer:
     def _coco_weights(self) -> Path | None:
         configured = os.environ.get("COCO_WEIGHTS", "").strip()
         candidates = [Path(configured)] if configured else []
+        candidates.append(self.config.weights_path.with_name("yolov8s.pt"))
         candidates.append(self.config.weights_path.with_name("yolov8n-coco.pt"))
         for candidate in candidates:
             if candidate.is_file():
@@ -1370,14 +1387,8 @@ class StreamAnalyzer:
 
     def _watch_phone(self, frame: np.ndarray, people, parts) -> None:
         self._phone_crop = None
-        self._phone_tracks = []
         if not self._smartphone.get("enabled"):
             return
-        limit = self._smartphone.get("hand_limit_seconds")
-        try:
-            limit_s = int(limit) if limit else None
-        except (TypeError, ValueError):
-            limit_s = None
         if people.tracker_id is None or len(people) == 0:
             return
         now = time.time()
@@ -1386,33 +1397,19 @@ class StreamAnalyzer:
             self._phone_at = now
             index = indexes[self._phone_cursor % len(indexes)]
             self._phone_cursor += 1
-            self._look_for_phone(frame, people.xyxy[index], int(people.tracker_id[index]), parts, now)
-        sightings: list[PhoneSighting] = []
-        for index in indexes:
             tracker_id = int(people.tracker_id[index])
-            seen = self._phone_seen.get(tracker_id)
-            if seen is None or now - seen > 1.0:
-                continue
-            box = people.xyxy[index]
-            center = ((float(box[0]) + float(box[2])) / 2, (float(box[1]) + float(box[3])) / 2)
-            sightings.append(PhoneSighting(
-                tracker_id,
-                center,
-                True,
-                bool(self._phone_use.get(tracker_id)),
-            ))
-        self._phone_tracks = self._phone_clock.update(sightings, now, limit_s)
-        if self._phone_tracks:
-            self._ask_phone_use(frame, people)
+            found = self._look_for_phone(frame, people.xyxy[index], tracker_id, parts, now)
+            votes = self._phone_votes.setdefault(tracker_id, deque(maxlen=VOTE_WINDOW))
+            votes.append(found)
 
-    def _look_for_phone(self, frame: np.ndarray, person_box: np.ndarray, tracker_id: int, parts, now: float) -> None:
+    def _look_for_phone(self, frame: np.ndarray, person_box: np.ndarray, tracker_id: int, parts, now: float) -> bool:
         height, width = frame.shape[:2]
         x1 = max(0, int(person_box[0]))
         y1 = max(0, int(person_box[1]))
         x2 = min(width, int(person_box[2]))
         y2 = min(height, int(person_box[3]))
         if x2 - x1 < 12 or y2 - y1 < 12:
-            return
+            return False
         crop = frame[y1:y2, x1:x2]
         resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_LINEAR)
         scale_x = (x2 - x1) / 320
@@ -1433,7 +1430,10 @@ class StreamAnalyzer:
             self._phone_seen[tracker_id] = now
             self._phone_where = where
             self._phone_holder = tracker_id
-            return
+            center = ((float(mapped[0]) + float(mapped[2])) / 2, (float(mapped[1]) + float(mapped[3])) / 2)
+            self._phone_centers[tracker_id] = center
+            return True
+        return False
 
     def _ask_phone_use(self, frame: np.ndarray, people) -> None:
         if not self.config.jev_url or getattr(self, "_phone_ask_inflight", False):
@@ -1526,12 +1526,255 @@ class StreamAnalyzer:
         ]
         return draw_unicode_labels(frame, labels)
 
+    def _load_pose_model(self) -> bool:
+        if self._pose_model is not None:
+            return True
+        if self._pose_unavailable:
+            return False
+        weights = self.config.weights_path.with_name("yolov8n-pose.pt")
+        if not weights.is_file():
+            self._pose_unavailable = True
+            return False
+        try:
+            if self._backend == "coreml" or coreml_requested():
+                package = _ensure_coreml_package(weights, imgsz=640)
+                self._pose_model = _import_yolo()(str(package))
+                self._pose_backend = "coreml"
+                return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"CoreML da pose indisponível ({exc}); usando PyTorch.", file=sys.stderr, flush=True)
+        try:
+            self._pose_model = _import_yolo()(str(weights))
+            device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
+            self._pose_model.to(device)
+            self._pose_backend = "pytorch"
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"Pose indisponível ({exc}).", file=sys.stderr, flush=True)
+            self._pose_unavailable = True
+            return False
+
+    def _poses(self, frame: np.ndarray, people) -> dict[int, dict[str, Any]]:
+        # A pose inteira custa cerca de 14 ms. Em um quadro sim e outro não, o p5 fica acima de 15 FPS.
+        if self._frame_index % 2 == 1 and self._pose_cache:
+            return self._pose_cache
+        if people.tracker_id is None or not self._load_pose_model():
+            return {}
+        assert self._pose_model is not None
+        if self._pose_backend == "coreml":
+            result = self._pose_model(frame, verbose=False, conf=0.25, imgsz=640)[0]
+        else:
+            device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
+            result = self._pose_model(frame, verbose=False, conf=0.25, imgsz=640, device=device)[0]
+        if result.keypoints is None or result.boxes is None or len(result.boxes) == 0:
+            return {}
+        xy = result.keypoints.xy.cpu().numpy()
+        conf = result.keypoints.conf
+        conf_np = conf.cpu().numpy() if conf is not None else None
+        boxes = result.boxes.xyxy.cpu().numpy()
+        found: dict[int, dict[str, Any]] = {}
+        for index, tracker_id in enumerate(people.tracker_id):
+            if tracker_id is None:
+                continue
+            person_box = people.xyxy[index]
+            best = None
+            for key_index, box in enumerate(boxes):
+                if self._center_inside(box, person_box):
+                    best = key_index
+                    break
+            if best is None:
+                continue
+            scores = None if conf_np is None else conf_np[best]
+            found[int(tracker_id)] = describe_pose(xy[best], scores)
+        self._pose_cache = found
+        return found
+
+    def _head_height(self, person_box: np.ndarray, parts) -> float:
+        heads = self._body_boxes(person_box, parts, {"head"})
+        if heads:
+            return max(float(box[3]) - float(box[1]) for box in heads)
+        return 0.35 * max(float(person_box[3]) - float(person_box[1]), 1.0)
+
+    def _item_facts(self, tracker_id: int, label: str, person_box: np.ndarray, parts, pose: dict[str, Any]) -> dict[str, Any]:
+        present = False
+        conf = 0.0
+        on_part = False
+        if parts is not None and parts.class_id is not None:
+            for index, class_id in enumerate(parts.class_id):
+                if self._class_label(int(class_id)) != label:
+                    continue
+                box = parts.xyxy[index]
+                if not self._center_inside(box, person_box):
+                    continue
+                present = True
+                score = float(parts.confidence[index]) if parts.confidence is not None else 0.0
+                conf = max(conf, score)
+                part = {"helmet": "head", "goggles": "face", "ear_protection": "ear", "gloves": "hand", "mask": "face", "boots": "foot"}.get(label)
+                anchors = self._body_boxes(person_box, parts, {part}) if part else []
+                on_part = on_part or any(self._center_inside(box, anchor) for anchor in anchors) or part in {None, "torso"}
+        votes = self._fact_votes.setdefault((tracker_id, label), deque(maxlen=VOTE_WINDOW))
+        votes.append(present and (on_part or label in {"vest", "harness"}))
+        part_name = {"helmet": "head", "goggles": "face", "ear_protection": "ear", "earplug": "ear", "gloves": "hand", "mask": "face", "boots": "foot"}.get(label, "torso")
+        part_visible = {
+            "head": not pose.get("occluded", False),
+            "face": bool(pose.get("face_visible")),
+            "ear": bool(pose.get("ear_visible")),
+            "hand": bool(pose.get("hand_visible")) or bool(self._body_boxes(person_box, parts, {"hand"})),
+            "foot": True,
+            "torso": True,
+        }.get(part_name, True)
+        return {
+            "conf": round(conf, 3),
+            "on_part": on_part or label in {"vest", "harness"},
+            "part_visible": part_visible,
+            "votes_present": sum(1 for seen in votes if seen),
+            "votes_window": len(votes),
+            "zoom": self._zoom_status.get(tracker_id, "not_run") if label == "goggles" else "not_run",
+            "detector": label != "earplug",
+        }
+
+    def _phone_facts(self, tracker_id: int, pose: dict[str, Any], head_height: float) -> dict[str, Any]:
+        votes = self._phone_votes.get(tracker_id, ())
+        center = self._phone_centers.get(tracker_id)
+        previous = getattr(self, "_phone_previous", {}).get(tracker_id)
+        motion = 0.0 if center is None or previous is None else float(np.hypot(center[0] - previous[0], center[1] - previous[1]))
+        if not hasattr(self, "_phone_previous"):
+            self._phone_previous = {}
+        if center is not None:
+            self._phone_previous[tracker_id] = center
+        return {
+            "votes_present": sum(1 for seen in votes if seen),
+            "votes_window": len(votes) or 1,
+            "dist_wrist_px": nearest(center, pose.get("wrists") or []),
+            "dist_face_px": nearest(center, [pose["nose"]] if pose.get("nose") else []),
+            "dist_ear_px": nearest(center, pose.get("ears") or []),
+            "face_toward_phone": face_toward_phone(pose, center, head_height),
+            "motion_px": round(motion, 1),
+        }
+
+    def _perceive(self, frame: np.ndarray, people, parts) -> None:
+        self._verdict = {"persons": []}
+        if people.tracker_id is None or len(people) == 0:
+            self._facts = {"persons": []}
+            return
+        poses = self._poses(frame, people)
+        persons = []
+        limit = self._smartphone.get("hand_limit_seconds")
+        try:
+            limit_s = int(limit) if limit else None
+        except (TypeError, ValueError):
+            limit_s = None
+        now = time.time()
+        for index, tracker_id in enumerate(people.tracker_id):
+            if tracker_id is None:
+                continue
+            tid = int(tracker_id)
+            person_box = people.xyxy[index]
+            pose = poses.get(tid, {"occluded": False, "yaw": "unknown", "face_visible": False, "ear_visible": False, "hand_visible": False, "wrists": [], "ears": [], "nose": None, "eyes": []})
+            head_height = self._head_height(person_box, parts)
+            items = {
+                label: self._item_facts(tid, label, person_box, parts, pose)
+                for label in self.config.required_ppe
+            }
+            if "earplug" in items:
+                items["earplug"]["detector"] = False
+            persons.append({
+                "tracker_id": tid,
+                "head_height_px": round(head_height, 1),
+                "head_occluded": bool(pose.get("occluded")),
+                "head_yaw": pose.get("yaw", "unknown"),
+                "items": items,
+                "phone": self._phone_facts(tid, pose, head_height) if self._smartphone.get("enabled") else {"votes_present": 0, "votes_window": 1},
+            })
+        facts = {"persons": persons}
+        local = judge_facts(facts)
+        signature = json.dumps(facts, sort_keys=True)
+        verdict = local
+        if self._remote_sig == signature and self._remote_verdict is not None:
+            verdict = self._remote_verdict
+        self._facts = facts
+        self._facts_signature = signature
+        self._verdict = verdict
+        self._schedule_judge(facts, signature)
+        sightings: list[PhoneSighting] = []
+        by_id = {int(person["tracker_id"]): person for person in verdict.get("persons") or []}
+        for person in persons:
+            phone = (by_id.get(person["tracker_id"]) or {}).get("phone") or {}
+            if int((person.get("phone") or {}).get("votes_present") or 0) <= 0 and phone.get("status") != "uso":
+                continue
+            box = people.xyxy[list(people.tracker_id).index(person["tracker_id"])]
+            center = ((float(box[0]) + float(box[2])) / 2, (float(box[1]) + float(box[3])) / 2)
+            sightings.append(PhoneSighting(person["tracker_id"], center, True, phone.get("status") == "uso"))
+        self._phone_tracks = self._phone_clock.update(sightings, now, limit_s) if self._smartphone.get("enabled") else []
+
+    def _schedule_judge(self, facts: dict[str, Any], signature: str) -> None:
+        if not self.config.jev_url or not facts.get("persons"):
+            return
+        now = time.time()
+        if signature == self._facts_sig and (self._judge_ok or now - self._judge_at < 3):
+            return
+        self._facts_sig = signature
+        self._judge_at = now
+        threading.Thread(target=self._judge_background, args=(facts, signature), name="snitch-judge", daemon=True).start()
+
+    def _judge_background(self, facts: dict[str, Any], signature: str) -> None:
+        started = time.perf_counter()
+        payload = json.dumps(facts).encode()
+        try:
+            request = urllib.request.Request(
+                self.config.jev_url.rstrip("/") + "/judge",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=2.5) as response:
+                body = json.loads(response.read().decode())
+            jev_metrics.record(
+                endpoint="/judge",
+                trigger="fatos",
+                payload_bytes=len(payload),
+                latency_ms=(time.perf_counter() - started) * 1000,
+                status=str(getattr(response, "status", 200)),
+                decision="ok",
+            )
+            if isinstance(body, dict) and isinstance(body.get("persons"), list):
+                self._remote_verdict = body
+                self._remote_sig = signature
+                self._judge_ok = True
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as exc:
+            self._judge_ok = False
+            jev_metrics.record(
+                endpoint="/judge",
+                trigger="fatos",
+                payload_bytes=len(payload),
+                latency_ms=(time.perf_counter() - started) * 1000,
+                status="timeout" if isinstance(exc, TimeoutError) else "error",
+                decision=None,
+            )
+
+    def _apply_verdict(self, state: dict[str, Any]) -> None:
+        verdict = self._verdict if isinstance(getattr(self, "_verdict", None), dict) else {"persons": []}
+        by_id = {
+            int(person["tracker_id"]): person
+            for person in verdict.get("persons") or []
+            if person.get("tracker_id") is not None
+        }
+        for person in state.get("persons") or []:
+            judged = by_id.get(int(person.get("tracker_id")))
+            if not judged:
+                continue
+            person["ppe_missing"] = [
+                name for name, item in (judged.get("ppe") or {}).items() if item.get("status") == "sem"
+            ]
+            person["ppe_judge"] = judged.get("ppe") or {}
+        state["judge"] = verdict
+
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
         detect_started = time.perf_counter()
         people, parts = self._track_people_only(self._run_yolo(frame))
         if not self.config.mock:
             parts = self._refine_facial_ppe(frame, people, parts)
             self._watch_phone(frame, people, parts)
+            self._perceive(frame, people, parts)
         detect_elapsed = time.perf_counter() - detect_started
         self._inference_fps = round(1.0 / detect_elapsed, 1) if detect_elapsed > 0 else 0.0
         zone_hits, dwell_exceeded, zone_dwell = self._zone_status(people, frame.shape[1], frame.shape[0])
@@ -1545,6 +1788,7 @@ class StreamAnalyzer:
 
         if not self.config.mock:
             self._schedule_config()
+            self._apply_verdict(state)
         phone_state = dict(self._smartphone)
         phone_state["tracks"] = list(self._phone_tracks)
         state["smartphone"] = phone_state
@@ -1571,17 +1815,9 @@ class StreamAnalyzer:
         return annotated, state
 
     def _attach_jev(self, state: dict[str, Any], persons: list[TrackedPerson]) -> None:
-        if _env_flag("SNITCH_JEV_SYNC"):
-            if self.config.jev_url and persons:
-                self._ask_jev_now(state)
-        else:
-            self._schedule_jev(state, persons)
-            with self._jev_lock:
-                if self._last_jev is not None:
-                    state["jev"] = self._last_jev
-                elif self._last_jev_error:
-                    state["jev_error"] = self._last_jev_error
-
+        with self._jev_lock:
+            if self._last_jev_error:
+                state["jev_error"] = self._last_jev_error
         with self._jev_lock:
             state["telemetry"] = {
                 "frame_index": self._frame_index,
@@ -1672,7 +1908,6 @@ class StreamAnalyzer:
         web = os.environ.get("SNITCH_WEB_URL", "").rstrip("/")
         if not web:
             return
-        jev = state.get("jev") if isinstance(state.get("jev"), dict) else {}
         location_id = int(os.environ.get("SNITCH_LOCATION_ID", "2"))
         jobs: list[tuple[str, str, dict[str, Any]]] = []
         missing_items, missing_labels, detected_items = self._missing_ppe_report(state)
@@ -1734,21 +1969,6 @@ class StreamAnalyzer:
                     "tracker_id": track.get("tracker_id"),
                     "elapsed_seconds": track.get("elapsed_s"),
                     "hand_limit_seconds": track.get("limit_s"),
-                },
-            ))
-        if jev.get("any_person_in_restricted_zone") is True and not posted_restricted:
-            jobs.append((
-                "idle_zone:laya",
-                f"{web}/snitch/episodes/idle-zone",
-                {
-                    "employee_id": self._linked_employee_id(state),
-                    "location_id": location_id,
-                    "camera_id": self.config.camera_id,
-                    "zone": "restrita",
-                    "zone_type": "restrita",
-                    "max_time_seconds": 0,
-                    "time_exceeded": True,
-                    "dwell_seconds": 0,
                 },
             ))
         if not jobs:
