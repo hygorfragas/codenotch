@@ -11,6 +11,7 @@ services:
     environment:
       PHP_CLI_SERVER_WORKERS: "4"
       JEV_URL: http://host.docker.internal:8787
+      SNITCH_ENGINE_URL: http://host.docker.internal:8765
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -40,9 +41,9 @@ services:
     ports:
       - "8765:8765"
     environment:
-      SNITCH_VISION_MOCK: ${SNITCH_VISION_MOCK:-1}
+      SNITCH_VISION_MOCK: ${SNITCH_VISION_MOCK:-0}
       SNITCH_LOOP_SOURCE: "1"
-      SNITCH_STREAM_SOURCE: /clips/demo.avi
+      SNITCH_STREAM_SOURCE: /weights/person-loop.avi
       JEV_URL: http://host.docker.internal:8787
       SH17_WEIGHTS: /weights/sh17.pt
       MPLCONFIGDIR: /tmp/matplotlib
@@ -50,6 +51,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./snitch/storage/engine:/weights
+      - ./snitch/engine:/opt/snitch/engine
     restart: unless-stopped
     healthcheck:
       test:

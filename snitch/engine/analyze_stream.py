@@ -53,6 +53,34 @@ PPE_BODY_MAP: dict[str, str] = {
     "boots": "foot",
 }
 
+# Nomes do yolo8n.pt oficial (sh17.yaml) -> vocabulário do motor.
+CLASS_ALIASES: dict[str, str] = {
+    "safety-vest": "vest",
+    "shoes": "boots",
+    "glasses": "goggles",
+    "ear-mufs": "ear_protection",
+    "face-mask": "mask",
+    "hands": "hand",
+}
+
+
+def canonical_class_name(name: str) -> str:
+    return CLASS_ALIASES.get(name, name)
+
+
+def lookup_class_name(class_id: int, names: Any | None = None) -> str:
+    """Rótulo canônico. Com o modelo carregado usa model.names; no mock, SH17_CLASS_NAMES."""
+    raw: str
+    if isinstance(names, dict):
+        raw = str(names.get(class_id, class_id))
+    elif isinstance(names, (list, tuple)) and 0 <= class_id < len(names):
+        raw = str(names[class_id])
+    elif 0 <= class_id < len(SH17_CLASS_NAMES):
+        raw = SH17_CLASS_NAMES[class_id]
+    else:
+        raw = str(class_id)
+    return canonical_class_name(raw)
+
 
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
@@ -112,6 +140,9 @@ class StreamAnalyzer:
                     "Defina SH17_WEIGHTS ou SNITCH_VISION_MOCK=1."
                 )
             self._model = YOLO(weights)
+            device = os.environ.get("SNITCH_YOLO_DEVICE", "").strip()
+            if device:
+                self._model.to(device)
             for zone in config.zones:
                 self._polygon_zones.append(
                     (zone.name, sv.PolygonZone(polygon=zone.polygon))
@@ -142,15 +173,17 @@ class StreamAnalyzer:
 
         return sv.Detections.from_ultralytics(results)
 
+    def _class_label(self, class_id: int) -> str:
+        names = getattr(self._model, "names", None) if self._model is not None else None
+        return lookup_class_name(class_id, names)
+
     def _annotate(self, frame: np.ndarray, detections) -> np.ndarray:
         import supervision as sv
 
         box_annotator = sv.BoxAnnotator(thickness=2)
         label_annotator = sv.LabelAnnotator(text_scale=0.5)
-        labels = [
-            SH17_CLASS_NAMES[int(cid)] if int(cid) < len(SH17_CLASS_NAMES) else str(int(cid))
-            for cid in detections.class_id
-        ]
+        class_ids = detections.class_id if detections.class_id is not None else []
+        labels = [self._class_label(int(cid)) for cid in class_ids]
         annotated = box_annotator.annotate(scene=frame.copy(), detections=detections)
         return label_annotator.annotate(scene=annotated, detections=detections, labels=labels)
 
@@ -183,7 +216,7 @@ class StreamAnalyzer:
                 continue
             tid = int(tracker_id)
             class_id = int(detections.class_id[i]) if detections.class_id is not None else 0
-            label = SH17_CLASS_NAMES[class_id] if class_id < len(SH17_CLASS_NAMES) else str(class_id)
+            label = self._class_label(class_id)
             entry = by_tracker.setdefault(
                 tid,
                 {"bbox": detections.xyxy[i], "ppe": []},

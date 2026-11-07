@@ -54,17 +54,21 @@ docker compose down
 
 `down` remove os containers e mantém o arquivo SQLite no volume.
 
-O padrão é detecção simulada (`SNITCH_VISION_MOCK=1`). Os pesos oficiais SH17 já podem ficar em `snitch/storage/engine/sh17.pt` (montado no motor como `/weights/sh17.pt`, variável `SH17_WEIGHTS`). O arquivo neste Mac é o **YOLOv8n treinado no SH17** (`yolo8n.pt`, release `v1` de [ahmadmughees/SH17dataset](https://github.com/ahmadmughees/SH17dataset/releases/tag/v1)): **6252377 bytes (5,96 MiB)**. O `.gitignore` dessa pasta deixa o `.pt` fora do Git. Para a detecção real, recrie só o motor. No Docker do Mac o PyTorch da imagem é CPU:
+Neste Mac o compose sobe com inferência real (`SNITCH_VISION_MOCK=0`) e os pesos em `snitch/storage/engine/sh17.pt` (no motor, `/weights/sh17.pt`). O arquivo é o **YOLOv8n treinado no SH17** (`yolo8n.pt`, release `v1` de [ahmadmughees/SH17dataset](https://github.com/ahmadmughees/SH17dataset/releases/tag/v1)): **6252377 bytes (5,96 MiB)**. O `.gitignore` dessa pasta deixa o `.pt` fora do Git. No Docker do Mac o PyTorch é CPU. Volte ao mock com:
 
 ```bash
-SNITCH_VISION_MOCK=0 docker compose up -d --no-deps --force-recreate snitch-engine
+SNITCH_VISION_MOCK=1 docker compose up -d --no-deps --force-recreate snitch-engine
 ```
 
-Sem esse arquivo o motor recusa a inferência real. Volte ao mock com `SNITCH_VISION_MOCK=1` na mesma linha.
+Sem o arquivo o motor recusa a inferência real. Com o modelo carregado, o rótulo sai de `model.names`. Apelidos do `sh17.yaml` viram o vocabulário do painel: `safety-vest` → `vest`, `shoes` → `boots`, `glasses` → `goggles`, `ear-mufs` → `ear_protection`, `face-mask` → `mask`, `hands` → `hand`. No mock, sem modelo, vale `SH17_CLASS_NAMES`.
 
-As 17 classes gravadas nesse `yolo8n.pt` seguem o `sh17.yaml` oficial (`person`, `ear`, `ear-mufs`, `face`, `face-guard`, `face-mask`, `foot`, `tool`, `glasses`, `gloves`, `helmet`, `hands`, `head`, `medical-suit`, `shoes`, `safety-suit`, `safety-vest`). A tupla `SH17_CLASS_NAMES` do motor ainda usa outros nomes; o id da classe do peso não coincide com essa tupla.
+O loop do Docker lê `snitch/storage/engine/person-loop.avi` (foto de pessoa repetida) para o YOLO ter o que detectar. A webcam do Mac, com MPS, é outro comando, na raiz do repositório:
 
-O clipe de teste (`/clips/demo.avi`, gerado na imagem) fica em loop no lugar da webcam, então a página ao vivo continua recebendo quadros.
+```bash
+./run-webcam-mac.sh
+```
+
+Ele para só o `snitch-engine` do Docker, libera a 8765 e sobe o motor nativo na câmera `0`. O painel segue em `http://127.0.0.1:8000` porque `SNITCH_ENGINE_URL` aponta para `http://host.docker.internal:8765`.
 
 URLs neste Mac:
 

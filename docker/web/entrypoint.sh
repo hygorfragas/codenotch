@@ -43,7 +43,7 @@ FILESYSTEM_DISK=local
 QUEUE_CONNECTION=database
 CACHE_STORE=database
 MAIL_MAILER=log
-SNITCH_ENGINE_URL=http://snitch-engine:8765
+SNITCH_ENGINE_URL=http://host.docker.internal:8765
 SH17_WEIGHTS=/weights/sh17.pt
 JEV_URL=http://host.docker.internal:8787
 EOF

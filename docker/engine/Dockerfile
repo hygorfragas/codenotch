@@ -12,6 +12,9 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r /tmp/requirements.txt \
     && pip install --no-cache-dir pytest
 
+# 0.26+ tirou o ByteTrack do pacote. O motor ainda usa sv.ByteTrack.
+RUN pip install --no-cache-dir 'supervision>=0.24.0,<0.26'
+
 COPY snitch/engine/ /opt/snitch/engine/
 COPY docker/engine/entrypoint.sh /entrypoint.sh
 
