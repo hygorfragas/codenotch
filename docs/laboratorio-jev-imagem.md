@@ -345,8 +345,8 @@ Uma vez por segundo, o v8x ocupa um quadro lento. Numa janela de 12 quadros isso
 | Capacete | Longe | 0,87 | 0,20 | 0,90 | 0,25 | 0,83 | 0,17 |
 | Capacete | Média | 0,83 | 0,38 | 0,98 | 0,83 | 0,89 | 0,50 |
 | Capacete | Perto | 0,88 | 0,81 | 0,96 | 0,93 | 0,87 | 0,81 |
-| Óculos | Média | 0,16 | 0,12 | 0,89 | 0,63 | 0,36 | 0,18 |
-| Óculos | Perto | 0,70 | 0,83 | 0,84 | 0,82 | 0,68 | 0,80 |
+| Óculos | Média | 0,16 | 0,12 | 0,82 | 0,50 | 0,36 | 0,18 |
+| Óculos | Perto | 0,70 | 0,83 | 0,75 | 0,89 | 0,68 | 0,80 |
 | Luva | Média | 0,75 | 0,31 | 0,95 | 0,69 | 0,76 | 0,33 |
 | Luva | Perto | 0,88 | 0,94 | 0,96 | 0,97 | 0,90 | 0,92 |
 | Colete | Média | 0,79 | 0,39 | 0,97 | 0,80 | 0,76 | 0,35 |
@@ -379,8 +379,8 @@ No clipe do Antes a cabeça fica perto de 238 px, então o zoom não roda e o FP
 | Capacete | Longe | 0,87 / 0,20 | 0,90 / 0,25 | 0,87 / 0,20 |
 | Capacete | Média | 0,83 / 0,38 | 0,98 / 0,83 | 0,84 / 0,40 |
 | Capacete | Perto | 0,88 / 0,81 | 0,96 / 0,93 | 0,88 / 0,81 |
-| Óculos | Média | 0,16 / 0,12 | 0,89 / 0,63 | 0,27 / 0,14 |
-| Óculos | Perto | 0,70 / 0,83 | 0,84 / 0,82 | 0,70 / 0,83 |
+| Óculos | Média | 0,16 / 0,12 | 0,82 / 0,50 | 0,27 / 0,14 |
+| Óculos | Perto | 0,70 / 0,83 | 0,75 / 0,89 | 0,70 / 0,83 |
 | Luva | Média | 0,75 / 0,31 | 0,95 / 0,69 | 0,76 / 0,32 |
 | Luva | Perto | 0,88 / 0,94 | 0,96 / 0,97 | 0,88 / 0,94 |
 | Colete | Média | 0,79 / 0,39 | 0,97 / 0,80 | 0,79 / 0,39 |
@@ -399,6 +399,8 @@ O marco não tem detector, então a acurácia de A é 0,64: ele sempre diz que n
 | v8s a 320 | 0,80 | 0,87 | 0,54 | 0,78 | 17,3 |
 | v8s a 640 | 0,79 | 0,86 | 0,50 | 0,77 | 19,4 |
 | v8m a 640 | 0,82 | 0,88 | 0,58 | 0,80 | 11,0 |
+
+A linha do v8s a 320 sai só do detector: celular perto da mão, do rosto ou da cabeça, limiar 0,25, entrada 320. São 13 acertos e 2 falsos positivos. O total empata com o JEV, mas as decisões coincidem em 50 das 66 fotos, então não é o cache. A rodada anterior, 0,62 de precisão e 0,67 de recall, marcava uso em qualquer caixa de celular na imagem inteira, no mesmo limiar e na mesma entrada. A regra de perto do corpo é o que muda: os falsos positivos caem de 10 para 2 e os acertos de 16 para 13.
 
 O v8m é o melhor celular local e passa o E, porque o E deixa o nano filtrar os casos. Não cabe em todo quadro: a inferência cai de 73 para 11. Uma vez a cada 12 quadros, com o v8s a 320 já carregado, o p50 de inferência ainda cai para 29,1 e o p5 para 7,3. O segundo modelo ocupa o ANE mesmo quando não é chamado. Não há ritmo que recupere o FPS do v8m sozinho enquanto esse peso ficar carregado.
 
