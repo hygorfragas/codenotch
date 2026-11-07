@@ -294,3 +294,112 @@ Cada clipe dura 10 segundos. São 8 por faixa, 24 no total.
 `{faixa}` é `perto`, `media` ou `longe`.
 
 Salvar em `snitch/storage/engine/lab-video/`. Essa pasta já fica de fora do git. Não renomeie no meio: o próximo laboratório lê esse nome.
+
+## Motor local melhor, sem JEV
+
+Nenhuma chamada ao JEV. Nenhum treino e nenhum Colab. Os pesos novos ficaram em `/tmp/sh17-weights` e `/tmp/sh17-variants`. O `sh17.pt` do motor e a pasta `weights/` do marco não foram trocados.
+
+Todos os pesos pedidos existem em público, no release `v1` do SH17: v8l, v8x, v9-e e v10x. O v8m em 960 e 1280 foi exportado em CoreML FP16 a partir do mesmo `yolo8m.pt`. O COCO v8m veio do release público do Ultralytics.
+
+As 208 fotos são o teste HB1204, não o Pexels do SH17. Não há indício de que tenham entrado no treino desses pesos. Os recortes com nome do COCO são do val2017, que fica de fora do treino do COCO. O person-loop não pertence a nenhum dos dois.
+
+A faixa de cada foto é a do marco, para a comparação não mudar de grupo. A acurácia trata indeterminado como erro. No detector local não há indeterminado: ou é com, ou é sem.
+
+Acurácia ponderada pelos 612 rótulos (200 capacetes, 103 óculos, 134 luvas, 175 coletes):
+
+| Motor | Acurácia | Inferência p50, parado |
+| --- | --- | --- |
+| Marco, v8m a 640 | 0,75 | 73,2 |
+| v8l a 640 | 0,76 | 50,5 |
+| v8x a 640 | 0,77 | 37,7 |
+| v10x a 640 | 0,76 | 17,5 |
+| v9-e a 640 | 0,74 | 3,6 |
+| v8m a 960 | 0,60 | 8,6 |
+| v8m a 1280 | 0,52 | 6,1 |
+| Zoom do v8m se a cabeça tem menos de 110 px | 0,77 | o clipe do Antes não dispara |
+| Regra E, com JEV | 0,93 | não roda no quadro |
+
+O melhor motor local é o v8x, e o ganho sobre o marco é de cerca de dois pontos. A regra E continua uns 16 pontos à frente. Entrada maior que 640 piora este conjunto: o peso foi treinado a 640, e a 1280 a acurácia cai para 0,52. O v9-e também fica abaixo do v8m.
+
+O FPS abaixo foi medido no mesmo clipe e com as mesmas 12 amostras, com o motor Docker parado. Ele estava em cerca de 270% de CPU e, sozinho, punha o v8m em uns 19 fps. Com a máquina livre, o v8m desta sessão fica acima do Antes da manhã (inferência 41,6). A coluna da manhã continua sendo o Antes já publicado. A comparação entre variantes é a desta sessão.
+
+| Variante | Câmera p50 / p5 | Inferência p50 / p5 | Cabe no Antes da manhã |
+| --- | --- | --- | --- |
+| Antes, parado | 28,8 / 27,5 | 41,6 / 40,5 | |
+| v8m, parado, Docker parado | 53,2 / 49,8 | 73,2 / 67,3 | sim |
+| v8l, todo quadro | 40,4 / 34,5 | 50,5 / 43,0 | sim, nesta máquina livre |
+| v8x, todo quadro | 31,8 / 31,1 | 37,7 / 37,1 | não: a inferência fica abaixo de 41,6 |
+| v10x, todo quadro | 13,7 / 9,8 | 17,5 / 12,4 | não |
+| v9-e, todo quadro | 3,4 / 3,0 | 3,6 / 3,2 | não |
+| v8m a 960 | 6,8 / 2,1 | 8,6 / 2,4 | não |
+| v8m a 1280 | 5,5 / 1,6 | 6,1 / 1,9 | não |
+
+No movimento, o v8l fica em inferência 50,8 / 49,7 e o v8x em 37,5 / 36,1. O Antes de movimento era 37,1 / 32,0. O v8x no movimento ainda passa esse número; no parado, não.
+
+Uma vez por segundo, o v8x ocupa um quadro lento. Numa janela de 12 quadros isso em geral não muda o p50, e a acurácia do veredito passa a ser a do v8x (0,77), não a do E. Não recupera os 0,93. Rodar o v8x só na dúvida (58% das fotos) continua frequente demais para o FPS, e o teto de acurácia deste peso neste conjunto é 0,77.
+
+### v8x por faixa, ao lado de A e E
+
+| Item | Faixa | A acurácia | A sem | E acurácia | E sem | v8x acurácia | v8x sem |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Capacete | Longe | 0,87 | 0,20 | 0,90 | 0,25 | 0,83 | 0,17 |
+| Capacete | Média | 0,83 | 0,38 | 0,98 | 0,83 | 0,89 | 0,50 |
+| Capacete | Perto | 0,88 | 0,81 | 0,96 | 0,93 | 0,87 | 0,81 |
+| Óculos | Média | 0,16 | 0,12 | 0,89 | 0,63 | 0,36 | 0,18 |
+| Óculos | Perto | 0,70 | 0,83 | 0,84 | 0,82 | 0,68 | 0,80 |
+| Luva | Média | 0,75 | 0,31 | 0,95 | 0,69 | 0,76 | 0,33 |
+| Luva | Perto | 0,88 | 0,94 | 0,96 | 0,97 | 0,90 | 0,92 |
+| Colete | Média | 0,79 | 0,39 | 0,97 | 0,80 | 0,76 | 0,35 |
+| Colete | Perto | 0,87 | 0,83 | 1,00 | 1,00 | 0,87 | 0,85 |
+
+Óculos longe tem 3 fotos em todos os pesos. O v8x melhora o capacete na média (0,89 contra 0,83) e a luva um pouco. Não chega perto do E, e em vários "sem" continua abaixo de 0,50.
+
+### Outros pesos, no total
+
+| Variante | Capacete | Óculos | Luva | Colete |
+| --- | --- | --- | --- | --- |
+| A, v8m | 0,86 / 0,63 | 0,40 / 0,38 | 0,80 / 0,64 | 0,82 / 0,63 |
+| E | 0,96 / 0,86 | 0,80 / 0,78 | 0,94 / 0,86 | 0,98 / 0,93 |
+| v8l | 0,87 / 0,66 | 0,50 / 0,44 | 0,73 / 0,55 | 0,81 / 0,63 |
+| v10x | 0,86 / 0,63 | 0,46 / 0,41 | 0,77 / 0,59 | 0,82 / 0,64 |
+| v9-e | 0,83 / 0,60 | 0,48 / 0,42 | 0,75 / 0,58 | 0,78 / 0,59 |
+| v8m a 960 | 0,65 / 0,42 | 0,40 / 0,38 | 0,61 / 0,45 | 0,69 / 0,50 |
+| v8m a 1280 | 0,54 / 0,35 | 0,39 / 0,39 | 0,56 / 0,42 | 0,55 / 0,41 |
+
+Cada célula é acurácia / precisão do sem.
+
+### Zoom local
+
+Segunda passada do mesmo v8m no recorte da pessoa. Duas regras: cabeça abaixo de 110 px (130 das 208 fotos) ou só na dúvida do D. As duas deram a mesma tabela. O ganho é pequeno: acurácia ponderada 0,77, igual ao v8x, com o v8m no quadro normal.
+
+No clipe do Antes a cabeça fica perto de 238 px, então o zoom não roda e o FPS é o do v8m. Quando roda, a passada extra custa cerca de 50 ms. Uma vez por segundo, o p50 dos outros quadros fica no v8m e a acurácia do veredito fica a desta tabela, não a do E.
+
+| Item | Faixa | A | E | Zoom |
+| --- | --- | --- | --- | --- |
+| Capacete | Longe | 0,87 / 0,20 | 0,90 / 0,25 | 0,87 / 0,20 |
+| Capacete | Média | 0,83 / 0,38 | 0,98 / 0,83 | 0,84 / 0,40 |
+| Capacete | Perto | 0,88 / 0,81 | 0,96 / 0,93 | 0,88 / 0,81 |
+| Óculos | Média | 0,16 / 0,12 | 0,89 / 0,63 | 0,27 / 0,14 |
+| Óculos | Perto | 0,70 / 0,83 | 0,84 / 0,82 | 0,70 / 0,83 |
+| Luva | Média | 0,75 / 0,31 | 0,95 / 0,69 | 0,76 / 0,32 |
+| Luva | Perto | 0,88 / 0,94 | 0,96 / 0,97 | 0,88 / 0,94 |
+| Colete | Média | 0,79 / 0,39 | 0,97 / 0,80 | 0,79 / 0,39 |
+| Colete | Perto | 0,87 / 0,83 | 1,00 / 1,00 | 0,87 / 0,83 |
+
+Perto o zoom nem é chamado na regra da cabeça, e os números repetem o marco.
+
+### Celular sem o nano na frente
+
+O marco não tem detector, então a acurácia de A é 0,64: ele sempre diz que não há uso. E, que só pergunta ao JEV quando o nano e o v8s concordam, fica em 0,70. Com o COCO sempre ligado, sem o nano decidir:
+
+| Detector | Acurácia | Precisão | Recall | Precisão do sem | Inferência p50, todo quadro |
+| --- | --- | --- | --- | --- | --- |
+| A | 0,64 |  | 0,00 | 0,64 | 73,2 |
+| E | 0,70 | 1,00 | 0,17 | 0,68 | não roda sempre |
+| v8s a 320 | 0,80 | 0,87 | 0,54 | 0,78 | 17,3 |
+| v8s a 640 | 0,79 | 0,86 | 0,50 | 0,77 | 19,4 |
+| v8m a 640 | 0,82 | 0,88 | 0,58 | 0,80 | 11,0 |
+
+O v8m é o melhor celular local e passa o E, porque o E deixa o nano filtrar os casos. Não cabe em todo quadro: a inferência cai de 73 para 11. Uma vez a cada 12 quadros, com o v8s a 320 já carregado, o p50 de inferência ainda cai para 29,1 e o p5 para 7,3. O segundo modelo ocupa o ANE mesmo quando não é chamado. Não há ritmo que recupere o FPS do v8m sozinho enquanto esse peso ficar carregado.
+
+A zona não muda de conclusão. O teste desenha o polígono na caixa da pessoa. Com uma caixa, qualquer um desses pesos acerta por geometria. Não é aí que o modelo maior ganha.
