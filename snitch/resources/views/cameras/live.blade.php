@@ -135,26 +135,13 @@
                         const latency = info.jev_latency_ms == null ? '—' : `${Math.round(info.jev_latency_ms)} ms`;
                         const updated = info.jev_updated_at ? new Date(info.jev_updated_at * 1000).toLocaleTimeString() : '—';
                         const infer = info.inference_fps == null ? '—' : `${info.inference_fps} FPS`;
-                        const p50 = info.laya_p50_ms == null ? '—' : `${Math.round(info.laya_p50_ms)} ms`;
-                        const p95 = info.laya_p95_ms == null ? '—' : `${Math.round(info.laya_p95_ms)} ms`;
-                        const errors = info.laya_error_rate == null ? '—' : `${Math.round(info.laya_error_rate * 100)}%`;
-                        telemetry.textContent = `FPS ${info.fps ?? localFps} · Inferência ${infer} · Memória: último quadro (sem acúmulo) · Laya ${laya} · ${latency} · p50 ${p50} · p95 ${p95} · erro ${errors} · atualizado ${updated}`;
+                        telemetry.textContent = `FPS ${info.fps ?? localFps} · Inferência ${infer} · Memória: último quadro (sem acúmulo) · Laya ${laya} · ${latency} · atualizado ${updated}`;
                         lastFrameAt = now;
                     }
                     const jev = payload.state && payload.state.jev;
                     const missingLabels = (payload.state && payload.state.missing_ppe_labels_pt) || [];
-                    const phone = payload.state && payload.state.smartphone;
-                    const phoneLines = [];
-                    if (phone && Array.isArray(phone.tracks)) {
-                        phone.tracks.forEach((track) => {
-                            if (!track.limit_s) {
-                                return;
-                            }
-                            phoneLines.push(`Uso de smartphone: ${track.elapsed_s}s / ${track.limit_s}s`);
-                        });
-                    }
-                    if ((jev && typeof jev === 'object') || missingLabels.length || phoneLines.length) {
-                        const parts = phoneLines.slice();
+                    if ((jev && typeof jev === 'object') || missingLabels.length) {
+                        const parts = [];
                         if (missingLabels.length) {
                             parts.push(`EPI ausente: ${missingLabels.join(', ')}`);
                             parts.push(`EPI obrigatório faltando: sim (${missingLabels.join(', ')})`);

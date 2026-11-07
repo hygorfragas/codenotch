@@ -45,14 +45,13 @@
                 <form method="post" action="{{ route('snitch.settings.smartphone') }}" class="flex flex-wrap items-end gap-3">
                     @csrf
                     <input type="hidden" name="location_id" value="{{ $location->id }}">
-                    <h3 class="w-full text-sm font-semibold text-slate-200">Uso de smartphone</h3>
-                    <p class="w-full text-xs text-slate-500">A infração só nasce depois do tempo mínimo, com o uso confirmado.</p>
+                    <h3 class="w-full text-sm font-semibold text-slate-200">Smartphone na mão</h3>
                     <label class="flex items-center gap-2 text-sm text-slate-300">
                         <input type="checkbox" name="enabled" value="1" @checked($location->smartphoneSetting?->enabled) class="rounded border-slate-600 bg-slate-950">
                         Ativo
                     </label>
                     <label class="text-sm text-slate-300">
-                        Tempo mínimo para infração (segundos)
+                        Limite (segundos)
                         <input type="number" name="hand_limit_seconds" min="1" value="{{ $location->smartphoneSetting?->hand_limit_seconds }}" class="mt-1 block w-32 rounded-md border border-slate-700 bg-slate-950 px-2 py-1">
                     </label>
                     <button class="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white">Salvar</button>

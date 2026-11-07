@@ -62,7 +62,7 @@ SNITCH_VISION_MOCK=1 docker compose up -d --no-deps --force-recreate snitch-engi
 
 Sem o arquivo o motor recusa a inferência real. Com o modelo carregado, o rótulo sai de `model.names`. Apelidos do `sh17.yaml` viram o vocabulário do painel: `safety-vest` → `vest`, `shoes` → `boots`, `glasses` → `goggles`, `ear-mufs` → `ear_protection`, `face-mask` → `mask`, `hands` → `hand`. No mock, sem modelo, vale `SH17_CLASS_NAMES`.
 
-O loop do Docker lê `snitch/storage/engine/person-loop.avi` (foto de pessoa repetida) para o YOLO ter o que detectar. A webcam do Mac, no Neural Engine, é outro comando, na raiz do repositório:
+O loop do Docker lê `snitch/storage/engine/person-loop.avi` (foto de pessoa repetida) para o YOLO ter o que detectar. A webcam do Mac, com MPS, é outro comando, na raiz do repositório:
 
 ```bash
 ./run-webcam-mac.sh
@@ -92,16 +92,6 @@ O contrato continua o de `engine/jev_client.py`:
 3. Resposta: `{"answer": true}` ou `{"answer": false}`.
 
 No mock a pessoa sintética não usa EPI e a zona restrita não entra na conta, então o painel mostra **EPI obrigatório faltando: sim** e **Pessoa em zona restrita: não**.
-
-Para voltar ao marco aprovado de 2026-11-07, na raiz do repositório:
-
-```bash
-./rollback-marco.sh snitch-marco-2026-11-07-coreml --dry-run
-./rollback-marco.sh snitch-marco-2026-11-07-coreml
-./rollback-marco.sh snitch-marco-2026-11-07-coreml --with-database
-```
-
-O `--dry-run` só confere a tag, os pesos, o pacote CoreML, o `.env`, o SQLite e as imagens. Sem essa flag o comando faz `git reset --hard` na tag, devolve os pesos e recria os containers a partir das imagens marcadas. O banco só volta com `--with-database`. Os arquivos do marco ficam fora do Git, em `~/codenotch-marcos/<tag>`.
 
 Testes, sem apagar o SQLite de demonstração:
 

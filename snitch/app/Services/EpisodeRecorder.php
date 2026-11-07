@@ -138,19 +138,13 @@ class EpisodeRecorder
             return null;
         }
 
-        $metadata = ['enabled' => true];
-        if (isset($payload['elapsed_seconds']) && is_numeric($payload['elapsed_seconds'])) {
-            $metadata['elapsed_seconds'] = (int) $payload['elapsed_seconds'];
-        }
-        if (isset($payload['hand_limit_seconds']) && is_numeric($payload['hand_limit_seconds'])) {
-            $metadata['hand_limit_seconds'] = (int) $payload['hand_limit_seconds'];
-        }
-
         return $this->persistEpisode(
             type: EpisodeType::Smartphone,
             employeeId: isset($payload['employee_id']) ? (int) $payload['employee_id'] : null,
             locationId: $payload['location_id'] ?? null,
-            metadata: $metadata,
+            metadata: [
+                'enabled' => true,
+            ],
             photo: $payload['photo'] ?? null,
         );
     }
