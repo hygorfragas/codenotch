@@ -68,6 +68,13 @@ class LiveCameraController extends Controller
             'engineStreamUrl' => $publicEngine.'/cameras/'.$model->id.'/stream',
             'employees' => $model->location->company->employees,
             'trackerLinks' => $model->trackerLinks,
+            'zones' => $model->zones->map(fn ($zone): array => [
+                'id' => $zone->id,
+                'name' => $zone->name,
+                'type' => $zone->type->value,
+                'max_dwell_seconds' => $zone->max_dwell_seconds,
+                'polygon' => $zone->polygon,
+            ])->values(),
         ]);
     }
 

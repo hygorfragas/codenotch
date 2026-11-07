@@ -31,11 +31,11 @@
                     <input type="hidden" name="location_id" value="{{ $location->id }}">
                     <h3 class="text-sm font-semibold text-slate-200">EPI obrigatório</h3>
                     <div class="flex flex-wrap gap-3">
-                        @foreach ($ppeCategories as $category)
+                        @foreach ($ppeCategories as $category => $label)
                             @php $on = (bool) $location->ppeRequirements->firstWhere('category', $category)?->required; @endphp
                             <label class="flex items-center gap-2 text-sm text-slate-300">
                                 <input type="checkbox" name="categories[]" value="{{ $category }}" @checked($on) class="rounded border-slate-600 bg-slate-950">
-                                {{ $category }}
+                                {{ $label }}
                             </label>
                         @endforeach
                     </div>

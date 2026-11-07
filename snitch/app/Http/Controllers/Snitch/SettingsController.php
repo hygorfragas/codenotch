@@ -19,16 +19,16 @@ use Illuminate\View\View;
 
 class SettingsController extends Controller
 {
-    /** @var list<string> */
+    /** @var array<string, string> */
     public const PPE_CATEGORIES = [
-        'helmet',
-        'vest',
-        'boots',
-        'gloves',
-        'goggles',
-        'ear_protection',
-        'mask',
-        'harness',
+        'helmet' => 'Capacete',
+        'vest' => 'Colete refletivo',
+        'boots' => 'Botina',
+        'gloves' => 'Luvas',
+        'goggles' => 'Óculos de proteção',
+        'ear_protection' => 'Protetor auricular',
+        'mask' => 'Máscara facial',
+        'harness' => 'Cinto de segurança',
     ];
 
     public function index(): View
@@ -69,7 +69,7 @@ class SettingsController extends Controller
             'categories.*' => ['string'],
         ]);
         $selected = collect($data['categories'] ?? []);
-        foreach (self::PPE_CATEGORIES as $category) {
+        foreach (array_keys(self::PPE_CATEGORIES) as $category) {
             LocationPpeRequirement::query()->updateOrCreate(
                 ['location_id' => $data['location_id'], 'category' => $category],
                 ['required' => $selected->contains($category)],
@@ -115,7 +115,7 @@ class SettingsController extends Controller
         return back()->with('status', 'Canal de alerta atualizado.');
     }
 
-    public function storeZone(Request $request): RedirectResponse
+    public function storeZone(Request $request): RedirectResponse|JsonResponse
     {
         $data = $request->validate([
             'camera_id' => ['required', 'integer', 'exists:cameras,id'],
@@ -128,20 +128,35 @@ class SettingsController extends Controller
         if (! is_array($polygon) || count($polygon) < 3) {
             return back()->withErrors(['polygon' => 'Informe um polígono JSON com pelo menos 3 pontos.'])->withInput();
         }
-        Zone::query()->create([
+        $zone = Zone::query()->create([
             'camera_id' => $data['camera_id'],
             'name' => $data['name'],
             'type' => $data['type'],
             'max_dwell_seconds' => $data['type'] === 'passagem' ? ($data['max_dwell_seconds'] ?? null) : null,
             'polygon' => $polygon,
         ]);
+        if ($request->expectsJson()) {
+            return response()->json([
+                'ok' => true,
+                'zone' => [
+                    'id' => $zone->id,
+                    'name' => $zone->name,
+                    'type' => $zone->type->value,
+                    'max_dwell_seconds' => $zone->max_dwell_seconds,
+                    'polygon' => $zone->polygon,
+                ],
+            ]);
+        }
 
         return back()->with('status', 'Zona criada.');
     }
 
-    public function destroyZone(Zone $zone): RedirectResponse
+    public function destroyZone(Request $request, Zone $zone): RedirectResponse|JsonResponse
     {
         $zone->delete();
+        if ($request->expectsJson()) {
+            return response()->json(['ok' => true]);
+        }
 
         return back()->with('status', 'Zona removida.');
     }
