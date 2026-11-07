@@ -18,6 +18,9 @@ if [[ ! -x "$VENV/bin/python" ]]; then
   "$VENV/bin/pip" install --upgrade pip
   "$VENV/bin/pip" install -r "$ENGINE/requirements.txt"
 fi
+if ! "$VENV/bin/python" -c "import PIL" >/dev/null 2>&1; then
+  "$VENV/bin/pip" install 'pillow>=10'
+fi
 
 STOPPED=0
 restart_docker() {

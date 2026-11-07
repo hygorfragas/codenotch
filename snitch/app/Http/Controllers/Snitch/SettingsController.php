@@ -50,7 +50,7 @@ class SettingsController extends Controller
             'ppeCategories' => self::PPE_CATEGORIES,
             'episodeTypes' => [
                 'missing_ppe' => 'EPI ausente',
-                'idle_zone' => 'Ociosidade',
+                'idle_zone' => 'Permanência em zona',
                 'smartphone' => 'Smartphone',
             ],
             'extraChannels' => [
@@ -252,6 +252,7 @@ class SettingsController extends Controller
             'camera_id' => $model->id,
             'required_ppe' => $required,
             'zones' => $model->zones->map(fn (Zone $zone): array => [
+                'id' => $zone->id,
                 'name' => $zone->name,
                 'type' => $zone->type instanceof ZoneType ? $zone->type->value : (string) $zone->type,
                 'max_dwell_seconds' => $zone->max_dwell_seconds,

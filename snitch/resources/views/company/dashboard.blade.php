@@ -49,7 +49,7 @@
                             <img src="{{ $episode->thumbnailSrc() }}" alt="" class="h-14 w-24 shrink-0 rounded object-cover" loading="lazy">
                         @endif
                         <div class="min-w-0 flex-1">
-                            <p class="text-sm font-medium text-slate-100">{{ $episode->typeLabel() }} ({{ $episode->type->value }})</p>
+                            <p class="text-sm font-medium text-slate-100">{{ $episode->episodeSummary() }}</p>
                             <p class="text-xs text-slate-400">{{ $episode->recorded_at->timezone(config('app.timezone'))->format('d/m/Y H:i') }}</p>
                             <p class="truncate text-xs text-slate-500">Localidade #{{ $episode->location_id }}</p>
                         </div>

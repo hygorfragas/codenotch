@@ -23,7 +23,8 @@
             <p id="live-status" class="text-sm font-medium text-emerald-400" role="status">Conectando…</p>
         </div>
         <p id="live-telemetry" class="mb-1 text-sm text-slate-300">FPS — · Memória: último quadro (sem acúmulo) · Laya aguardando</p>
-        <p id="live-decisions" class="mb-4 text-sm text-slate-300"></p>
+        <p id="live-decisions" class="mb-1 text-sm text-slate-300"></p>
+        <p id="live-zones" class="mb-4 text-sm text-slate-300">Zonas: aguardando permanência…</p>
 
         <div id="live-stage" class="relative aspect-video overflow-hidden rounded-lg border border-slate-700 bg-slate-950">
             <img id="live-frame" alt="Fluxo ao vivo com caixas de detecção" class="h-full w-full object-contain" hidden>
@@ -137,15 +138,32 @@
                         lastFrameAt = now;
                     }
                     const jev = payload.state && payload.state.jev;
-                    if (jev && typeof jev === 'object') {
-                        decisions.textContent = Object.entries(jev).map(([key, value]) => {
-                            const label = jevLabels[key] || key;
-                            const text = value === true ? 'sim' : value === false ? 'não' : String(value);
-                            return `${label}: ${text}`;
-                        }).join(' · ');
+                    const missingLabels = (payload.state && payload.state.missing_ppe_labels_pt) || [];
+                    if ((jev && typeof jev === 'object') || missingLabels.length) {
+                        const parts = [];
+                        if (missingLabels.length) {
+                            parts.push(`EPI ausente: ${missingLabels.join(', ')}`);
+                            parts.push(`EPI obrigatório faltando: sim (${missingLabels.join(', ')})`);
+                        } else if (jev && jev.any_missing_required_ppe === true) {
+                            parts.push('EPI obrigatório faltando: sim');
+                        } else if (jev && jev.any_missing_required_ppe === false) {
+                            parts.push('EPI obrigatório faltando: não');
+                        }
+                        if (jev && typeof jev === 'object') {
+                            Object.entries(jev).forEach(([key, value]) => {
+                                if (key === 'any_missing_required_ppe') {
+                                    return;
+                                }
+                                const label = jevLabels[key] || key;
+                                const text = value === true ? 'sim' : value === false ? 'não' : String(value);
+                                parts.push(`${label}: ${text}`);
+                            });
+                        }
+                        decisions.textContent = parts.join(' · ');
                     } else if (payload.state && payload.state.jev_error) {
                         decisions.textContent = 'Jev sem resposta neste quadro';
                     }
+                    applyZoneDwell((payload.state && payload.state.zone_dwell) || []);
                 } catch {
                     showError();
                 }
@@ -166,6 +184,7 @@
             const canvas = document.getElementById('zone-canvas');
             const ctx = canvas.getContext('2d');
             const zones = @json($zones);
+            const dwellByName = {};
             let drawing = false;
             let draft = [];
             const csrf = document.querySelector('meta[name="csrf-token"]').content;
@@ -232,13 +251,74 @@
                     ctx.fillText(title, x + 6, y + 16);
                 };
                 zones.forEach((zone) => {
-                    const kind = zone.type === 'restrita' ? 'Restrita' : 'Passagem';
-                    const dwell = zone.max_dwell_seconds ? ` · ${zone.max_dwell_seconds}s` : '';
-                    drawPoly(zone.polygon || [], zone.type === 'restrita' ? 'rgba(239,68,68,1)' : 'rgba(52,211,153,1)', `${zone.name} · ${kind}${dwell}`);
+                    drawPoly(zone.polygon || [], zoneStroke(zone), zoneCaption(zone));
                 });
                 if (draft.length) {
                     drawPoly(draft, 'rgba(250,204,21,1)', 'Nova zona');
                 }
+            }
+
+            function zoneCaption(zone) {
+                const live = dwellByName[zone.name];
+                if (live && live.label) {
+                    return live.label;
+                }
+                const kind = zone.type === 'restrita' ? 'Restrita' : 'Passagem';
+                const dwell = zone.max_dwell_seconds ? ` · 0s / ${zone.max_dwell_seconds}s` : '';
+                return `${zone.name} · ${kind}${dwell}`;
+            }
+
+            function zoneStroke(zone) {
+                const live = dwellByName[zone.name];
+                const restricted = zone.type === 'restrita';
+                if (live && (live.exceeded || (live.occupied && restricted))) {
+                    return 'rgba(239,68,68,1)';
+                }
+                if (live && live.occupied) {
+                    return 'rgba(251,191,36,1)';
+                }
+                return restricted ? 'rgba(248,113,113,1)' : 'rgba(52,211,153,1)';
+            }
+
+            function escapeHtml(value) {
+                return String(value).replace(/[&<>"']/g, (ch) => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#39;',
+                }[ch]));
+            }
+
+            function applyZoneDwell(items) {
+                if (!items.length) {
+                    return;
+                }
+                items.forEach((zone) => {
+                    dwellByName[zone.name] = zone;
+                });
+                const line = document.getElementById('live-zones');
+                line.innerHTML = items.map((zone) => {
+                    const restricted = zone.type === 'restrita' || zone.type === 'risk';
+                    const hot = zone.exceeded || (zone.occupied && restricted);
+                    const warm = zone.occupied && !hot;
+                    const color = hot ? '#f87171' : warm ? '#fbbf24' : '#94a3b8';
+                    const title = restricted ? 'Zona restrita' : 'Permanência em zona';
+                    const elapsed = Number(zone.elapsed_s || 0);
+                    const clock = zone.max_dwell_seconds ? `${elapsed}s / ${zone.max_dwell_seconds}s` : `${elapsed}s`;
+                    const phrase = zone.occupied || zone.exceeded
+                        ? `${title}: ${zone.name} (${clock})`
+                        : (zone.label || zone.name);
+                    return `<span style="color:${color}">${escapeHtml(phrase)}</span>`;
+                }).join(' · ');
+                document.querySelectorAll('[data-zone-label]').forEach((span) => {
+                    const zone = zones.find((item) => item.name === span.dataset.zoneLabel);
+                    if (zone) {
+                        span.textContent = zoneCaption(zone);
+                        span.style.color = zoneStroke(zone).startsWith('rgba(251') ? '#fbbf24' : (zoneStroke(zone).startsWith('rgba(239') || zoneStroke(zone).startsWith('rgba(248') ? '#f87171' : '');
+                    }
+                });
+                paint();
             }
 
             function renderList() {
@@ -247,8 +327,10 @@
                 zones.forEach((zone) => {
                     const item = document.createElement('li');
                     item.className = 'flex items-center justify-between gap-3';
-                    const kind = zone.type === 'restrita' ? 'Restrita' : 'Passagem';
-                    item.innerHTML = `<span>${zone.name} · ${kind}${zone.max_dwell_seconds ? ` · ${zone.max_dwell_seconds}s` : ''}</span>`;
+                    const span = document.createElement('span');
+                    span.dataset.zoneLabel = zone.name;
+                    span.textContent = zoneCaption(zone);
+                    item.appendChild(span);
                     const button = document.createElement('button');
                     button.type = 'button';
                     button.className = 'text-red-400';

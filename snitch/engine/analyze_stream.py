@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import os
 import sys
 import threading
@@ -21,6 +22,7 @@ from typing import Any, Iterator
 
 import cv2
 import numpy as np
+from PIL import Image, ImageDraw, ImageFont
 
 from jev_client import ask_jev_sync
 from state_builder import TrackedPerson, build_jev_state
@@ -103,6 +105,109 @@ def display_class_name(name: str) -> str:
     return DISPLAY_LABELS.get(name, name)
 
 
+DWELL_GRACE_SECONDS = 4.5
+DWELL_REID_PIXELS = 220.0
+ZONE_MIN_OVERLAP = 0.15
+_BUNDLED_FONT = Path(__file__).resolve().parent / "fonts" / "DejaVuSans-Bold.ttf"
+FONT_CANDIDATES: tuple[Path, ...] = (
+    _BUNDLED_FONT,
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+    Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
+    Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+    Path("/Library/Fonts/Arial.ttf"),
+    Path("/System/Library/Fonts/Helvetica.ttc"),
+    Path("/System/Library/Fonts/Supplemental/Helvetica.ttc"),
+)
+_FONT_PATH: str | None = None
+_FONT_CACHE: dict[int, ImageFont.ImageFont | ImageFont.FreeTypeFont] = {}
+
+
+def resolve_unicode_font_path() -> str | None:
+    """Primeira fonte TrueType que desenha acentos. Hershey, do OpenCV, não desenha."""
+    global _FONT_PATH
+    if _FONT_PATH is not None:
+        return _FONT_PATH or None
+    for candidate in FONT_CANDIDATES:
+        if candidate.is_file():
+            _FONT_PATH = str(candidate)
+            return _FONT_PATH
+    _FONT_PATH = ""
+    return None
+
+
+def _unicode_font(size: int = 18) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    cached = _FONT_CACHE.get(size)
+    if cached is not None:
+        return cached
+    path = resolve_unicode_font_path()
+    font: ImageFont.ImageFont | ImageFont.FreeTypeFont
+    if path is None:
+        font = ImageFont.load_default()
+    else:
+        font = ImageFont.truetype(path, size=size)
+    _FONT_CACHE[size] = font
+    return font
+
+
+def draw_unicode_labels(
+    frame: np.ndarray,
+    labels: list[tuple[str, int, int, tuple[int, int, int]]],
+) -> np.ndarray:
+    """Desenha texto UTF-8 no quadro BGR. A cor vem em BGR, como no OpenCV."""
+    if not labels:
+        return frame
+    image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(image)
+    font = _unicode_font(18)
+    for text, x, y, color_bgr in labels:
+        if not text:
+            continue
+        fill = (int(color_bgr[2]), int(color_bgr[1]), int(color_bgr[0]))
+        left, top, right, bottom = draw.textbbox((x, y), text, font=font)
+        draw.rectangle((left - 3, top - 2, right + 3, bottom + 2), fill=(15, 23, 42))
+        draw.text((x, y), text, font=font, fill=fill)
+    return cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
+
+
+def person_intersects_zone(
+    box: np.ndarray,
+    polygon: np.ndarray,
+    min_overlap: float = ZONE_MIN_OVERLAP,
+) -> bool:
+    """Cabeça, centro ou pés dentro do polígono, ou pelo menos 15% da caixa sobre ele.
+
+    PolygonZone só olha o pé (BOTTOM_CENTER). Na webcam o pé fica fora do quadro
+    ou fora do polígono mesmo com a pessoa no meio da zona.
+    """
+    points = np.asarray(polygon, dtype=np.float32)
+    if points.shape[0] < 3:
+        return False
+    contour = np.ascontiguousarray(points.reshape(-1, 1, 2), dtype=np.float32)
+    x1, y1, x2, y2 = (float(value) for value in box)
+    anchors = (
+        ((x1 + x2) / 2.0, (y1 + y2) / 2.0),
+        ((x1 + x2) / 2.0, y2),
+        ((x1 + x2) / 2.0, y1),
+    )
+    for point in anchors:
+        if cv2.pointPolygonTest(contour, point, False) >= 0:
+            return True
+    width = max(x2 - x1, 1.0)
+    height = max(y2 - y1, 1.0)
+    pixels = width * height
+    scale = 1.0 if pixels <= 200_000 else math.sqrt(200_000 / pixels)
+    mask_w = max(2, int(round(width * scale)))
+    mask_h = max(2, int(round(height * scale)))
+    mask = np.zeros((mask_h, mask_w), dtype=np.uint8)
+    local = points.copy()
+    local[:, 0] = (local[:, 0] - x1) * (mask_w / width)
+    local[:, 1] = (local[:, 1] - y1) * (mask_h / height)
+    cv2.fillPoly(mask, [np.round(local).astype(np.int32)], 255)
+    covered = float(cv2.countNonZero(mask)) / float(mask_w * mask_h)
+    return covered >= min_overlap
+
+
 def lookup_class_name(class_id: int, names: Any | None = None) -> str:
     """Rótulo canônico. Com o modelo carregado usa model.names; no mock, SH17_CLASS_NAMES."""
     raw: str
@@ -139,6 +244,7 @@ class ZoneConfig:
     polygon: np.ndarray  # Nx2 float, pixels ou normalizado 0–1
     zone_type: str = "passagem"
     max_dwell_seconds: int | None = None
+    zone_id: int | None = None
 
 
 @dataclass
@@ -179,7 +285,7 @@ class StreamAnalyzer:
         self._config_lock = threading.Lock()
         self._config_inflight = False
         self._config_ts = 0.0
-        self._inside_since: dict[tuple[int, str], float] = {}
+        self._occupancy: dict[tuple[str, int, str], dict[str, Any]] = {}
 
         sv = _import_supervision()
         if not config.mock:
@@ -239,19 +345,30 @@ class StreamAnalyzer:
             who = f" {link['name']}"
         return f"[#{tracker_id}{who}] {label}"
 
-    def _annotate(self, frame: np.ndarray, detections) -> np.ndarray:
+    def _annotate(
+        self,
+        frame: np.ndarray,
+        detections,
+        missing_labels: dict[int, list[str]] | None = None,
+    ) -> np.ndarray:
         import supervision as sv
 
         box_annotator = sv.BoxAnnotator(thickness=2)
-        label_annotator = sv.LabelAnnotator(text_scale=0.5)
+        annotated = box_annotator.annotate(scene=frame.copy(), detections=detections)
+        if detections.xyxy is None or len(detections) == 0:
+            return annotated
         class_ids = list(detections.class_id) if detections.class_id is not None else []
         tracker_ids = list(detections.tracker_id) if detections.tracker_id is not None else []
-        labels = []
+        labels: list[tuple[str, int, int, tuple[int, int, int]]] = []
         for index, class_id in enumerate(class_ids):
-            tracker_id = tracker_ids[index] if index < len(tracker_ids) else None
-            labels.append(self._box_label(int(class_id), None if tracker_id is None else int(tracker_id)))
-        annotated = box_annotator.annotate(scene=frame.copy(), detections=detections)
-        return label_annotator.annotate(scene=annotated, detections=detections, labels=labels)
+            raw_tracker = tracker_ids[index] if index < len(tracker_ids) else None
+            tracker_id = None if raw_tracker is None else int(raw_tracker)
+            text = self._box_label(int(class_id), tracker_id)
+            if tracker_id is not None and missing_labels and missing_labels.get(tracker_id):
+                text = f"{text} · falta {', '.join(missing_labels[tracker_id])}"
+            x1, y1 = detections.xyxy[index][:2]
+            labels.append((text, int(x1), max(0, int(y1) - 22), (255, 255, 255)))
+        return draw_unicode_labels(annotated, labels)
 
     def _zone_hits(self, detections) -> dict[int, list[str]]:
         hits: dict[int, list[str]] = {}
@@ -311,79 +428,199 @@ class StreamAnalyzer:
             points[:, 1] *= height
         return points
 
+    def _employee_id_for_tracker(self, tracker_id: int) -> int | None:
+        link = self._tracker_links.get(str(tracker_id))
+        if isinstance(link, dict) and link.get("employee_id"):
+            return int(link["employee_id"])
+        return None
+
+    def _zone_caption(self, zone: ZoneConfig, elapsed_s: int, occupied: bool) -> str:
+        kind = "Restrita" if zone.zone_type in {"restrita", "risk"} else "Passagem"
+        if zone.max_dwell_seconds:
+            shown = elapsed_s if occupied else 0
+            return f"{zone.name} · {kind} · {shown}s / {zone.max_dwell_seconds}s"
+        if occupied:
+            return f"{zone.name} · {kind} · {elapsed_s}s"
+        return f"{zone.name} · {kind}"
+
+    def _touch_occupancy(self, key: tuple[str, int, str], item: dict[str, Any], now: float) -> None:
+        record = self._occupancy.get(key)
+        if record is None:
+            record = {"started": now}
+            self._occupancy[key] = record
+        record["last_seen"] = now
+        record["present"] = True
+        record["tracker_id"] = item["tracker_id"]
+        record["employee_id"] = item["employee_id"]
+        record["center"] = item["center"]
+        record["zone"] = item["zone"]
+
+    def _grace_donor(
+        self,
+        item: dict[str, Any],
+        now: float,
+        present_ids: set[int],
+    ) -> tuple[str, int, str] | None:
+        best_key: tuple[str, int, str] | None = None
+        best_distance = DWELL_REID_PIXELS
+        cx, cy = item["center"]
+        for key, record in self._occupancy.items():
+            kind, ident, zone_name = key
+            if kind != "tracker" or zone_name != item["zone"].name or ident in present_ids:
+                continue
+            if now - float(record["last_seen"]) > DWELL_GRACE_SECONDS:
+                continue
+            ox, oy = record["center"]
+            distance = math.hypot(cx - ox, cy - oy)
+            if distance <= best_distance:
+                best_distance = distance
+                best_key = key
+        return best_key
+
+    def _absorb_presence(self, present: list[dict[str, Any]], now: float) -> None:
+        for record in self._occupancy.values():
+            record["present"] = False
+        claimed: set[int] = set()
+        for index, item in enumerate(present):
+            employee_id = item["employee_id"]
+            if employee_id is None:
+                continue
+            zone_name = item["zone"].name
+            key = ("employee", int(employee_id), zone_name)
+            tracker_key = ("tracker", int(item["tracker_id"]), zone_name)
+            if key not in self._occupancy and tracker_key in self._occupancy:
+                self._occupancy[key] = self._occupancy.pop(tracker_key)
+            self._touch_occupancy(key, item, now)
+            claimed.add(index)
+        for index, item in enumerate(present):
+            if index in claimed or item["employee_id"] is not None:
+                continue
+            key = ("tracker", int(item["tracker_id"]), item["zone"].name)
+            if key in self._occupancy:
+                self._touch_occupancy(key, item, now)
+                claimed.add(index)
+        present_ids: dict[str, set[int]] = {}
+        for item in present:
+            present_ids.setdefault(item["zone"].name, set()).add(int(item["tracker_id"]))
+        for index, item in enumerate(present):
+            if index in claimed or item["employee_id"] is not None:
+                continue
+            donor = self._grace_donor(item, now, present_ids.get(item["zone"].name, set()))
+            key = ("tracker", int(item["tracker_id"]), item["zone"].name)
+            if donor is not None and donor != key:
+                self._occupancy[key] = self._occupancy.pop(donor)
+            self._touch_occupancy(key, item, now)
+        self._occupancy = {
+            key: record
+            for key, record in self._occupancy.items()
+            if record.get("present") or now - float(record["last_seen"]) <= DWELL_GRACE_SECONDS
+        }
+
+    def _zone_dwell_payload(self, now: float) -> tuple[dict[int, list[str]], list[str], list[dict[str, Any]]]:
+        hits: dict[int, list[str]] = {}
+        exceeded: list[str] = []
+        grouped: dict[str, dict[str, Any]] = {}
+        for zone in self.config.zones:
+            grouped[zone.name] = {
+                "name": zone.name,
+                "zone_id": zone.zone_id,
+                "type": zone.zone_type,
+                "max_dwell_seconds": zone.max_dwell_seconds,
+                "elapsed_s": 0,
+                "occupied": False,
+                "present": False,
+                "exceeded": False,
+                "tracker_id": None,
+                "employee_id": None,
+                "label": self._zone_caption(zone, 0, False),
+            }
+        for record in self._occupancy.values():
+            zone: ZoneConfig = record["zone"]
+            elapsed = max(0, int(now - float(record["started"])))
+            slot = grouped.get(zone.name)
+            if slot is None:
+                continue
+            passage = zone.zone_type in {"passagem", "passage"}
+            restricted = zone.zone_type in {"restrita", "risk"}
+            over = bool(passage and zone.max_dwell_seconds and elapsed >= int(zone.max_dwell_seconds))
+            present = bool(record.get("present"))
+            slot["occupied"] = True
+            slot["present"] = bool(slot["present"] or present)
+            slot["exceeded"] = bool(slot["exceeded"] or over)
+            if elapsed >= int(slot["elapsed_s"]):
+                slot["elapsed_s"] = elapsed
+                slot["tracker_id"] = int(record["tracker_id"])
+                slot["employee_id"] = record.get("employee_id")
+                slot["label"] = self._zone_caption(zone, elapsed, True)
+            if present and restricted:
+                hits.setdefault(int(record["tracker_id"]), []).append(zone.name)
+            elif present and over:
+                hits.setdefault(int(record["tracker_id"]), []).append(zone.name)
+                if zone.name not in exceeded:
+                    exceeded.append(zone.name)
+        return hits, exceeded, list(grouped.values())
+
     def _zone_status(
         self,
         detections,
         width: int,
         height: int,
-    ) -> tuple[dict[int, list[str]], list[str]]:
-        hits: dict[int, list[str]] = {}
-        exceeded: list[str] = []
-        if self.config.mock or not self.config.zones or detections.tracker_id is None:
-            return hits, exceeded
-        import supervision as sv
+        now: float | None = None,
+    ) -> tuple[dict[int, list[str]], list[str], list[dict[str, Any]]]:
+        clock = time.time() if now is None else now
+        if not self.config.zones:
+            return {}, [], []
+        present: list[dict[str, Any]] = []
+        if detections.tracker_id is not None and detections.class_id is not None:
+            person_rows = [
+                index
+                for index, tracker_id in enumerate(detections.tracker_id)
+                if tracker_id is not None and self._class_label(int(detections.class_id[index])) == "person"
+            ]
+            if person_rows:
+                people = detections[person_rows]
+                for zone in self.config.zones:
+                    polygon = self._polygon_pixels(zone.polygon, width, height)
+                    for index in range(len(people)):
+                        if people.tracker_id[index] is None:
+                            continue
+                        box = people.xyxy[index]
+                        if not person_intersects_zone(box, polygon):
+                            continue
+                        tracker_id = int(people.tracker_id[index])
+                        present.append({
+                            "tracker_id": tracker_id,
+                            "employee_id": self._employee_id_for_tracker(tracker_id),
+                            "center": (
+                                (float(box[0]) + float(box[2])) / 2.0,
+                                (float(box[1]) + float(box[3])) / 2.0,
+                            ),
+                            "zone": zone,
+                        })
+        self._absorb_presence(present, clock)
+        return self._zone_dwell_payload(clock)
 
-        now = time.time()
-        seen: set[tuple[int, str]] = set()
-        person_rows = [
-            index
-            for index, tracker_id in enumerate(detections.tracker_id)
-            if tracker_id is not None and self._class_label(int(detections.class_id[index])) == "person"
-        ]
-        if not person_rows:
-            self._inside_since = {}
-            return hits, exceeded
-        people = detections[person_rows]
-        for zone in self.config.zones:
-            polygon = self._polygon_pixels(zone.polygon, width, height)
-            try:
-                region = sv.PolygonZone(polygon=polygon)
-                mask = region.trigger(detections=people)
-            except Exception:  # noqa: BLE001
-                continue
-            for index, inside in enumerate(mask):
-                tracker_id = int(people.tracker_id[index])
-                if not inside:
-                    continue
-                key = (tracker_id, zone.name)
-                seen.add(key)
-                self._inside_since.setdefault(key, now)
-                dwell = now - self._inside_since[key]
-                kind = zone.zone_type
-                if kind in {"restrita", "risk"}:
-                    hits.setdefault(tracker_id, []).append(zone.name)
-                elif kind in {"passagem", "passage"} and zone.max_dwell_seconds and dwell >= zone.max_dwell_seconds:
-                    hits.setdefault(tracker_id, []).append(zone.name)
-                    if zone.name not in exceeded:
-                        exceeded.append(zone.name)
-        self._inside_since = {key: stamp for key, stamp in self._inside_since.items() if key in seen}
-        return hits, exceeded
-
-    def _draw_zones(
-        self,
-        frame: np.ndarray,
-        width: int,
-        height: int,
-        zone_hits: dict[int, list[str]],
-        dwell_exceeded: list[str],
-    ) -> np.ndarray:
+    def _draw_zones(self, frame: np.ndarray, zone_dwell: list[dict[str, Any]]) -> np.ndarray:
         if not self.config.zones:
             return frame
-        active = {name for names in zone_hits.values() for name in names}
+        by_name = {str(item["name"]): item for item in zone_dwell}
+        labels: list[tuple[str, int, int, tuple[int, int, int]]] = []
+        height, width = frame.shape[:2]
         for zone in self.config.zones:
+            info = by_name.get(zone.name, {})
             polygon = self._polygon_pixels(zone.polygon, width, height).astype(np.int32)
-            if zone.name in dwell_exceeded or (zone.zone_type in {"restrita", "risk"} and zone.name in active):
+            if info.get("exceeded") or (zone.zone_type in {"restrita", "risk"} and info.get("occupied")):
                 color = (40, 40, 220)
-            elif zone.name in active:
-                color = (0, 165, 255)
+            elif info.get("occupied"):
+                color = (0, 180, 255)
             else:
                 color = (80, 180, 80)
             cv2.polylines(frame, [polygon], isClosed=True, color=color, thickness=2)
-            title = display_class_name(zone.name) if zone.name in DISPLAY_LABELS else zone.name
-            if zone.max_dwell_seconds:
-                title = f"{title} {zone.max_dwell_seconds}s"
-            cv2.putText(frame, title, tuple(polygon[0]), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
-        return frame
+            title = str(info.get("label") or self._zone_caption(zone, 0, False))
+            anchor_x = int(polygon[0][0])
+            anchor_y = max(0, int(polygon[0][1]) - 22)
+            labels.append((title, anchor_x, anchor_y, color))
+        return draw_unicode_labels(frame, labels)
 
     def _person_indices(self, detections) -> list[int]:
         if detections.class_id is None:
@@ -437,7 +674,7 @@ class StreamAnalyzer:
 
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
         people, parts = self._track_people_only(self._run_yolo(frame))
-        zone_hits, dwell_exceeded = self._zone_status(people, frame.shape[1], frame.shape[0])
+        zone_hits, dwell_exceeded, zone_dwell = self._zone_status(people, frame.shape[1], frame.shape[0])
         persons = self._persons_from_tracks(people, zone_hits, parts)
         state = build_jev_state(
             camera_id=self.config.camera_id,
@@ -450,11 +687,18 @@ class StreamAnalyzer:
             self._schedule_config()
         state["smartphone"] = dict(self._smartphone)
         state["dwell_exceeded"] = dwell_exceeded
+        state["zone_dwell"] = zone_dwell
+        self._attach_missing_ppe(state)
         self._attach_jev(state, persons)
-        annotated = self._annotate(frame, people)
+        missing_labels = {
+            int(person["tracker_id"]): list(person.get("missing_ppe_labels_pt") or [])
+            for person in state["persons"]
+            if person.get("missing_ppe_labels_pt")
+        }
+        annotated = self._annotate(frame, people, missing_labels)
         if len(parts):
             annotated = self._annotate(annotated, parts)
-        annotated = self._draw_zones(annotated, frame.shape[1], frame.shape[0], zone_hits, dwell_exceeded)
+        annotated = self._draw_zones(annotated, zone_dwell)
         if persons and not self.config.mock:
             self._maybe_record_episode(annotated, state)
         self._frame_index += 1
@@ -541,53 +785,132 @@ class StreamAnalyzer:
 
     def _maybe_record_episode(self, annotated: np.ndarray, state: dict[str, Any]) -> None:
         web = os.environ.get("SNITCH_WEB_URL", "").rstrip("/")
-        jev = state.get("jev")
-        if not web or not isinstance(jev, dict):
+        if not web:
             return
-        photo = "data:image/jpeg;base64," + encode_frame_jpeg(annotated, quality=60)
+        jev = state.get("jev") if isinstance(state.get("jev"), dict) else {}
         location_id = int(os.environ.get("SNITCH_LOCATION_ID", "2"))
-        employee_id = self._linked_employee_id(state)
-        cooldown = float(os.environ.get("SNITCH_EPISODE_COOLDOWN", "30"))
-        now = time.time()
         jobs: list[tuple[str, str, dict[str, Any]]] = []
-        if jev.get("any_missing_required_ppe") is True:
+        missing_items, missing_labels, detected_items = self._missing_ppe_report(state)
+        if missing_items:
             jobs.append((
-                "ppe",
+                "missing_ppe",
                 f"{web}/snitch/episodes/ppe",
                 {
-                    "employee_id": employee_id,
+                    "employee_id": self._linked_employee_id(state),
                     "location_id": location_id,
                     "camera_id": self.config.camera_id,
-                    "required_ppe": "helmet",
-                    "detected_ppe": [],
-                    "photo": photo,
+                    "required_ppe": list(self.config.required_ppe),
+                    "detected_ppe": detected_items,
+                    "missing_ppe": missing_items,
+                    "missing_items": missing_items,
+                    "missing_ppe_labels_pt": missing_labels,
                 },
             ))
-        if jev.get("any_person_in_restricted_zone") is True or state.get("dwell_exceeded"):
+        posted_restricted = False
+        for zone in state.get("zone_dwell") or []:
+            if not isinstance(zone, dict) or not zone.get("present"):
+                continue
+            kind = str(zone.get("type") or "")
+            restricted = kind in {"restrita", "risk"}
+            passage = kind in {"passagem", "passage"} and bool(zone.get("exceeded"))
+            if not restricted and not passage:
+                continue
+            zone_key = zone.get("zone_id") or zone.get("name")
             jobs.append((
-                "zone",
+                f"idle_zone:{zone_key}",
                 f"{web}/snitch/episodes/idle-zone",
                 {
-                    "employee_id": employee_id,
+                    "employee_id": zone.get("employee_id"),
                     "location_id": location_id,
-                    "zone": "passagem",
-                    "zone_type": "passagem",
-                    "max_time_seconds": 1,
+                    "camera_id": self.config.camera_id,
+                    "zone_id": zone.get("zone_id"),
+                    "zone": zone.get("name"),
+                    "zone_type": "restrita" if restricted else "passagem",
+                    "max_time_seconds": zone.get("max_dwell_seconds") if zone.get("max_dwell_seconds") is not None else 0,
                     "time_exceeded": True,
-                    "photo": photo,
+                    "dwell_seconds": int(zone.get("elapsed_s") or 0),
+                    "tracker_id": zone.get("tracker_id"),
                 },
             ))
+            if restricted:
+                posted_restricted = True
+        if jev.get("any_person_in_restricted_zone") is True and not posted_restricted:
+            jobs.append((
+                "idle_zone:laya",
+                f"{web}/snitch/episodes/idle-zone",
+                {
+                    "employee_id": self._linked_employee_id(state),
+                    "location_id": location_id,
+                    "camera_id": self.config.camera_id,
+                    "zone": "restrita",
+                    "zone_type": "restrita",
+                    "max_time_seconds": 0,
+                    "time_exceeded": True,
+                    "dwell_seconds": 0,
+                },
+            ))
+        if not jobs:
+            return
+        photo = "data:image/jpeg;base64," + encode_frame_jpeg(annotated, quality=60)
+        cooldown = float(os.environ.get("SNITCH_EPISODE_COOLDOWN", "30"))
+        now = time.time()
         for key, url, payload in jobs:
+            payload["photo"] = photo
             with self._episode_lock:
                 if now - self._episode_at.get(key, 0.0) < cooldown:
                     continue
                 self._episode_at[key] = now
-            threading.Thread(
+            worker = threading.Thread(
                 target=_post_json,
                 args=(url, payload),
                 name=f"snitch-episode-{key}",
                 daemon=True,
-            ).start()
+            )
+            worker.start()
+            if _env_flag("SNITCH_EPISODE_SYNC"):
+                worker.join(timeout=2)
+
+    def _attach_missing_ppe(self, state: dict[str, Any]) -> None:
+        items: list[str] = []
+        labels: list[str] = []
+        for person in state.get("persons") or []:
+            if not isinstance(person, dict):
+                continue
+            missing = [str(item) for item in (person.get("ppe_missing") or []) if str(item).strip()]
+            person_labels = [display_class_name(item) for item in missing]
+            person["missing_ppe_items"] = missing
+            person["missing_ppe_labels_pt"] = person_labels
+            for item, label in zip(missing, person_labels):
+                if item not in items:
+                    items.append(item)
+                    labels.append(label)
+        state["missing_ppe_items"] = items
+        state["missing_ppe_labels_pt"] = labels
+        state["required_ppe"] = list(self.config.required_ppe)
+
+    def _missing_ppe_report(self, state: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
+        items: list[str] = []
+        labels: list[str] = []
+        detected: list[str] = []
+        for person in state.get("persons") or []:
+            if not isinstance(person, dict):
+                continue
+            person_items = [str(item) for item in (person.get("missing_ppe_items") or person.get("ppe_missing") or [])]
+            person_labels = person.get("missing_ppe_labels_pt") or [display_class_name(item) for item in person_items]
+            for item, label in zip(person_items, person_labels):
+                if item not in items:
+                    items.append(item)
+                    labels.append(str(label))
+            for item in person.get("ppe_detected") or []:
+                name = str(item)
+                if name not in detected:
+                    detected.append(name)
+        if not items:
+            items = [str(item) for item in (state.get("missing_ppe_items") or [])]
+            labels = [str(label) for label in (state.get("missing_ppe_labels_pt") or [])]
+            if len(labels) != len(items):
+                labels = [display_class_name(item) for item in items]
+        return items, labels, detected
 
     def _linked_employee_id(self, state: dict[str, Any]) -> int | None:
         for person in state.get("persons") or []:
@@ -641,15 +964,19 @@ class StreamAnalyzer:
             polygon = item.get("polygon") or []
             if not isinstance(polygon, list) or len(polygon) < 3:
                 continue
+            zone_id = item.get("id")
             zones.append(
                 ZoneConfig(
                     name=str(item.get("name") or "zona"),
                     polygon=np.array(polygon, dtype=np.float32),
                     zone_type=str(item.get("type") or "passagem"),
                     max_dwell_seconds=int(item["max_dwell_seconds"]) if item.get("max_dwell_seconds") else None,
+                    zone_id=int(zone_id) if zone_id else None,
                 )
             )
         self.config.zones = zones
+        names = {zone.name for zone in zones}
+        self._occupancy = {key: record for key, record in self._occupancy.items() if key[2] in names}
         if self.config.mock:
             return
         import supervision as sv

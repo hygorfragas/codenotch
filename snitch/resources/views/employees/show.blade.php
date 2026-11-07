@@ -57,7 +57,7 @@
             <ul class="mt-4 max-h-96 space-y-3 overflow-y-auto pr-1">
                 @forelse ($history as $episode)
                     <li class="rounded-lg border border-slate-800/80 bg-slate-950/40 p-3">
-                        <p class="text-sm font-medium text-slate-100">{{ $episode->typeLabel() }} ({{ $episode->type->value }})</p>
+                        <p class="text-sm font-medium text-slate-100">{{ $episode->episodeSummary() }}</p>
                         <p class="text-xs text-slate-400">{{ $episode->recorded_at->format('d/m/Y H:i') }}</p>
                     </li>
                 @empty

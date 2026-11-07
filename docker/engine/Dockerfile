@@ -15,6 +15,11 @@ RUN pip install --no-cache-dir --upgrade pip \
 # 0.26+ tirou o ByteTrack do pacote. O motor ainda usa sv.ByteTrack.
 RUN pip install --no-cache-dir 'supervision>=0.24.0,<0.26'
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir 'pillow>=10'
+
 COPY snitch/engine/ /opt/snitch/engine/
 COPY docker/engine/entrypoint.sh /entrypoint.sh
 
