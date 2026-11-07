@@ -112,6 +112,7 @@ YOLO_BASE_CONF = 0.10
 STRONG_CLASS_CONF = 0.25
 SMALL_PPE_CONF = 0.10
 PPE_MEMORY_SECONDS = 2.2
+GLASSES_ZOOM_INTERVAL = 0.6
 SMALL_PPE_LABELS = frozenset({"goggles", "ear_protection", "mask", "gloves", "face-guard"})
 CROP_PPE_LABELS = frozenset({"goggles", "helmet", "mask", "ear_protection", "face-guard"})
 _BUNDLED_FONT = Path(__file__).resolve().parent / "fonts" / "DejaVuSans-Bold.ttf"
@@ -584,12 +585,16 @@ class StreamAnalyzer:
             ]),
         )
 
+    def _glasses_required(self) -> bool:
+        required = set(self.config.required_ppe)
+        return "goggles" in required or "glasses" in required
+
     def _refine_facial_ppe(self, frame: np.ndarray, people, parts):
         if people.tracker_id is None or len(people) == 0:
             return parts
         now = time.time()
         added: list[tuple[list[float], int, float]] = []
-        crops = 0
+        pending_zoom: tuple[int, np.ndarray, np.ndarray] | None = None
         for index, tracker_id in enumerate(people.tracker_id):
             if tracker_id is None:
                 continue
@@ -597,13 +602,6 @@ class StreamAnalyzer:
             person_box = people.xyxy[index]
             anchor = self._facial_anchor(person_box, parts)
             present = self._labels_inside(person_box, parts)
-            if "goggles" not in present and crops < 2 and now - self._roi_at.get(tid, 0.0) >= 0.15:
-                self._roi_at[tid] = now
-                crops += 1
-                for box, class_id, confidence, label in self._infer_crop(frame, anchor):
-                    added.append((box, class_id, confidence))
-                    present.add(label)
-                    self._remember_ppe(tid, label, np.array(box), anchor, class_id, now)
             for label in CROP_PPE_LABELS:
                 if label in present:
                     continue
@@ -613,18 +611,26 @@ class StreamAnalyzer:
                 box, class_id = recalled
                 added.append((box, class_id, 0.2))
                 present.add(label)
-            for label in list(present):
-                if label not in CROP_PPE_LABELS:
-                    continue
-                # A fresh box inside the person updates the relative offset.
-                if parts.class_id is None:
-                    continue
+            if parts.class_id is not None:
                 for part_index, class_id in enumerate(parts.class_id):
-                    if self._class_label(int(class_id)) != label:
+                    label = self._class_label(int(class_id))
+                    if label not in CROP_PPE_LABELS:
                         continue
                     if self._center_inside(parts.xyxy[part_index], person_box):
                         self._remember_ppe(tid, label, parts.xyxy[part_index], anchor, int(class_id), now)
-                        break
+            if (
+                pending_zoom is None
+                and self._glasses_required()
+                and "goggles" not in present
+                and now - self._roi_at.get(-1, 0.0) >= GLASSES_ZOOM_INTERVAL
+            ):
+                pending_zoom = (tid, person_box, anchor)
+        if pending_zoom is not None:
+            tid, _person_box, anchor = pending_zoom
+            self._roi_at[-1] = now
+            for box, class_id, confidence, label in self._infer_crop(frame, anchor):
+                added.append((box, class_id, confidence))
+                self._remember_ppe(tid, label, np.array(box), anchor, class_id, now)
         expired = [key for key, record in self._ppe_memory.items() if now > float(record["until"])]
         for key in expired:
             self._ppe_memory.pop(key, None)
