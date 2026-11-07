@@ -1,0 +1,7 @@
+# Classe nova, separada do abafador (ear-mufs) do SH17.
+# O treino não roda daqui. Ele espera os clipes do Hygor e a aprovação explícita.
+path: .
+train: images/train
+val: images/val
+names:
+  0: earplug

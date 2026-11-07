@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import shutil
 import math
 import os
 import sys
@@ -26,6 +27,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from jev_client import ask_jev_sync
+from phone_watch import PhoneClock, PhoneSighting, phone_near_body
 from state_builder import TrackedPerson, build_jev_state
 
 # Classes SH17 (17 EPIs / partes corporais) — ordem alinhada ao dataset público.
@@ -276,15 +278,18 @@ def coreml_requested() -> bool:
     return chosen in {"", "auto", "coreml", "ane"}
 
 
-def _ensure_coreml_package(weights: Path) -> Path:
-    """Gera o pacote FP16 em 640 ao lado do .pt. O Neural Engine usa esse arquivo."""
-    package = weights.with_name(f"{weights.stem}.mlpackage")
+def _ensure_coreml_package(weights: Path, imgsz: int = 640) -> Path:
+    """Gera o pacote FP16 ao lado do .pt. 640 fica sem sufixo, para não trocar o marco do SH17."""
+    suffix = "" if int(imgsz) == 640 else f"-{int(imgsz)}"
+    package = weights.with_name(f"{weights.stem}{suffix}.mlpackage")
     marker = package / "Manifest.json"
     if marker.is_file() and marker.stat().st_mtime >= weights.stat().st_mtime:
         return package
-    exported = Path(_import_yolo()(str(weights)).export(format="coreml", imgsz=640, quantize=16, nms=False))
-    if not package.is_dir() and exported.is_dir():
-        return exported
+    exported = Path(_import_yolo()(str(weights)).export(format="coreml", imgsz=int(imgsz), quantize=16, nms=False))
+    if exported.is_dir() and exported.resolve() != package.resolve():
+        if package.exists():
+            shutil.rmtree(package)
+        exported.rename(package)
     if not (package / "Manifest.json").is_file():
         raise FileNotFoundError(f"CoreML não gerou {package}")
     return package
@@ -399,6 +404,16 @@ class StreamAnalyzer:
         self._vote_at: dict[int, float] = {}
         self._roi_at: dict[int, float] = {}
         self._inference_fps = 0.0
+        self._phone_model = None
+        self._phone_backend: str | None = None
+        self._phone_unavailable = False
+        self._phone_at = 0.0
+        self._phone_cursor = 0
+        self._phone_seen: dict[int, float] = {}
+        self._phone_use: dict[int, bool] = {}
+        self._phone_tracks: list[dict[str, Any]] = []
+        self._phone_crop: dict[str, Any] | None = None
+        self._phone_clock = PhoneClock(DWELL_GRACE_SECONDS, DWELL_REID_PIXELS)
 
         sv = _import_supervision()
         if not config.mock:
@@ -1284,11 +1299,219 @@ class StreamAnalyzer:
                 found.append(label)
         return found
 
+    def _coco_weights(self) -> Path | None:
+        configured = os.environ.get("COCO_WEIGHTS", "").strip()
+        candidates = [Path(configured)] if configured else []
+        candidates.append(self.config.weights_path.with_name("yolov8n-coco.pt"))
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        return None
+
+    def _load_phone_model(self) -> bool:
+        if self._phone_model is not None:
+            return True
+        if self._phone_unavailable:
+            return False
+        weights = self._coco_weights()
+        if weights is None:
+            self._phone_unavailable = True
+            return False
+        try:
+            if self._backend == "coreml" or coreml_requested():
+                package = _ensure_coreml_package(weights, imgsz=320)
+                self._phone_model = _import_yolo()(str(package))
+                self._phone_backend = "coreml"
+                return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"CoreML do celular indisponível ({exc}); usando PyTorch.", file=sys.stderr, flush=True)
+        try:
+            self._phone_model = _import_yolo()(str(weights))
+            device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
+            self._phone_model.to(device)
+            self._phone_backend = "pytorch"
+            return True
+        except Exception as exc:  # noqa: BLE001
+            print(f"Detector de celular indisponível ({exc}).", file=sys.stderr, flush=True)
+            self._phone_unavailable = True
+            return False
+
+    def _phone_boxes(self, crop: np.ndarray) -> list[np.ndarray]:
+        if not self._load_phone_model():
+            return []
+        assert self._phone_model is not None
+        if self._phone_backend == "coreml":
+            result = self._phone_model(crop, verbose=False, conf=0.25, imgsz=320)[0]
+        else:
+            device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
+            result = self._phone_model(crop, verbose=False, conf=0.25, imgsz=320, device=device)[0]
+        if result.boxes is None or len(result.boxes) == 0:
+            return []
+        names = getattr(self._phone_model, "names", {}) or {}
+        found: list[np.ndarray] = []
+        for box, class_id in zip(result.boxes.xyxy.cpu().numpy(), result.boxes.cls.cpu().numpy()):
+            label = str(names.get(int(class_id), class_id)).lower().replace(" ", "")
+            if label in {"cellphone", "mobilephone"} or int(class_id) == 67:
+                found.append(np.array(box, dtype=np.float32))
+        return found
+
+    def _body_boxes(self, person_box: np.ndarray, parts, labels: set[str]) -> list[np.ndarray]:
+        found: list[np.ndarray] = []
+        if parts is None or parts.class_id is None:
+            return found
+        for index, class_id in enumerate(parts.class_id):
+            if self._class_label(int(class_id)) not in labels:
+                continue
+            box = parts.xyxy[index]
+            if self._center_inside(box, person_box):
+                found.append(box)
+        return found
+
+    def _watch_phone(self, frame: np.ndarray, people, parts) -> None:
+        self._phone_crop = None
+        self._phone_tracks = []
+        if not self._smartphone.get("enabled"):
+            return
+        limit = self._smartphone.get("hand_limit_seconds")
+        try:
+            limit_s = int(limit) if limit else None
+        except (TypeError, ValueError):
+            limit_s = None
+        if people.tracker_id is None or len(people) == 0:
+            return
+        now = time.time()
+        indexes = [index for index, tracker_id in enumerate(people.tracker_id) if tracker_id is not None]
+        if indexes and now - self._phone_at >= 0.5:
+            self._phone_at = now
+            index = indexes[self._phone_cursor % len(indexes)]
+            self._phone_cursor += 1
+            self._look_for_phone(frame, people.xyxy[index], int(people.tracker_id[index]), parts, now)
+        sightings: list[PhoneSighting] = []
+        for index in indexes:
+            tracker_id = int(people.tracker_id[index])
+            seen = self._phone_seen.get(tracker_id)
+            if seen is None or now - seen > 1.0:
+                continue
+            box = people.xyxy[index]
+            center = ((float(box[0]) + float(box[2])) / 2, (float(box[1]) + float(box[3])) / 2)
+            sightings.append(PhoneSighting(
+                tracker_id,
+                center,
+                True,
+                bool(self._phone_use.get(tracker_id)),
+            ))
+        self._phone_tracks = self._phone_clock.update(sightings, now, limit_s)
+        if self._phone_tracks:
+            self._ask_phone_use(frame, people)
+
+    def _look_for_phone(self, frame: np.ndarray, person_box: np.ndarray, tracker_id: int, parts, now: float) -> None:
+        height, width = frame.shape[:2]
+        x1 = max(0, int(person_box[0]))
+        y1 = max(0, int(person_box[1]))
+        x2 = min(width, int(person_box[2]))
+        y2 = min(height, int(person_box[3]))
+        if x2 - x1 < 12 or y2 - y1 < 12:
+            return
+        crop = frame[y1:y2, x1:x2]
+        resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_LINEAR)
+        scale_x = (x2 - x1) / 320
+        scale_y = (y2 - y1) / 320
+        hands = self._body_boxes(person_box, parts, {"hand"})
+        faces = self._body_boxes(person_box, parts, {"face"})
+        heads = self._body_boxes(person_box, parts, {"head"})
+        for box in self._phone_boxes(resized):
+            mapped = np.array([
+                x1 + float(box[0]) * scale_x,
+                y1 + float(box[1]) * scale_y,
+                x1 + float(box[2]) * scale_x,
+                y1 + float(box[3]) * scale_y,
+            ], dtype=np.float32)
+            where = phone_near_body(mapped, hands, faces, heads)
+            if where is None:
+                continue
+            self._phone_seen[tracker_id] = now
+            self._phone_where = where
+            self._phone_holder = tracker_id
+            return
+
+    def _ask_phone_use(self, frame: np.ndarray, people) -> None:
+        if not self.config.jev_url or getattr(self, "_phone_ask_inflight", False):
+            return
+        holder = getattr(self, "_phone_holder", None)
+        if holder is None or time.time() - self._phone_seen.get(int(holder), 0.0) > 1.0:
+            return
+        if time.time() - getattr(self, "_phone_asked_at", 0.0) < 1.5:
+            return
+        person_box = None
+        for index, tracker_id in enumerate(people.tracker_id):
+            if tracker_id is not None and int(tracker_id) == int(holder):
+                person_box = people.xyxy[index]
+                break
+        if person_box is None:
+            return
+        height, width = frame.shape[:2]
+        x1 = max(0, int(person_box[0]))
+        y1 = max(0, int(person_box[1]))
+        x2 = min(width, int(person_box[2]))
+        y2 = min(height, int(person_box[3]))
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return
+        preview = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".jpg", preview, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        if not ok:
+            return
+        payload = {
+            "question": "smartphone_in_use",
+            "tracker_id": int(holder),
+            "phone_near": getattr(self, "_phone_where", "hand"),
+            "use_modes": ["handling", "looking", "at_ear"],
+            "crop_jpeg_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+        }
+        self._phone_ask_inflight = True
+        self._phone_asked_at = time.time()
+        threading.Thread(
+            target=self._phone_use_background,
+            args=(int(holder), payload),
+            name="snitch-phone",
+            daemon=True,
+        ).start()
+
+    def _phone_use_background(self, tracker_id: int, payload: dict[str, Any]) -> None:
+        try:
+            url = self.config.jev_url.rstrip("/") + "/ask"
+            request = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                body = json.loads(response.read().decode())
+            self._phone_use[tracker_id] = isinstance(body, dict) and body.get("answer") is True
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            return
+        finally:
+            self._phone_ask_inflight = False
+
+    def _draw_phone(self, frame: np.ndarray) -> np.ndarray:
+        labels = [
+            (
+                f"Uso de smartphone: {int(track['elapsed_s'])}s / {int(track['limit_s'])}s",
+                16,
+                16 + index * 28,
+                (255, 255, 255),
+            )
+            for index, track in enumerate(self._phone_tracks)
+            if int(track.get("limit_s") or 0) > 0
+        ]
+        return draw_unicode_labels(frame, labels)
+
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
         detect_started = time.perf_counter()
         people, parts = self._track_people_only(self._run_yolo(frame))
         if not self.config.mock:
             parts = self._refine_facial_ppe(frame, people, parts)
+            self._watch_phone(frame, people, parts)
         detect_elapsed = time.perf_counter() - detect_started
         self._inference_fps = round(1.0 / detect_elapsed, 1) if detect_elapsed > 0 else 0.0
         zone_hits, dwell_exceeded, zone_dwell = self._zone_status(people, frame.shape[1], frame.shape[0])
@@ -1302,7 +1525,9 @@ class StreamAnalyzer:
 
         if not self.config.mock:
             self._schedule_config()
-        state["smartphone"] = dict(self._smartphone)
+        phone_state = dict(self._smartphone)
+        phone_state["tracks"] = list(self._phone_tracks)
+        state["smartphone"] = phone_state
         state["dwell_exceeded"] = dwell_exceeded
         state["zone_dwell"] = zone_dwell
         self._attach_missing_ppe(state)
@@ -1316,6 +1541,7 @@ class StreamAnalyzer:
         if len(parts):
             annotated = self._annotate(annotated, parts)
         annotated = self._draw_zones(annotated, zone_dwell)
+        annotated = self._draw_phone(annotated)
         telemetry = dict(state.get("telemetry") or {})
         telemetry["inference_fps"] = self._inference_fps
         state["telemetry"] = telemetry
@@ -1455,6 +1681,23 @@ class StreamAnalyzer:
             ))
             if restricted:
                 posted_restricted = True
+        for track in (state.get("smartphone") or {}).get("tracks") or []:
+            if not isinstance(track, dict) or not track.get("limit_exceeded"):
+                continue
+            jobs.append((
+                f"smartphone:{track.get('tracker_id')}",
+                f"{web}/snitch/episodes/smartphone",
+                {
+                    "enabled": True,
+                    "limit_exceeded": True,
+                    "employee_id": self._employee_id_for_tracker(int(track["tracker_id"])) if track.get("tracker_id") is not None else None,
+                    "location_id": location_id,
+                    "camera_id": self.config.camera_id,
+                    "tracker_id": track.get("tracker_id"),
+                    "elapsed_seconds": track.get("elapsed_s"),
+                    "hand_limit_seconds": track.get("limit_s"),
+                },
+            ))
         if jev.get("any_person_in_restricted_zone") is True and not posted_restricted:
             jobs.append((
                 "idle_zone:laya",

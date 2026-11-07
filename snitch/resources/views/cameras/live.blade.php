@@ -140,8 +140,18 @@
                     }
                     const jev = payload.state && payload.state.jev;
                     const missingLabels = (payload.state && payload.state.missing_ppe_labels_pt) || [];
-                    if ((jev && typeof jev === 'object') || missingLabels.length) {
-                        const parts = [];
+                    const phone = payload.state && payload.state.smartphone;
+                    const phoneLines = [];
+                    if (phone && Array.isArray(phone.tracks)) {
+                        phone.tracks.forEach((track) => {
+                            if (!track.limit_s) {
+                                return;
+                            }
+                            phoneLines.push(`Uso de smartphone: ${track.elapsed_s}s / ${track.limit_s}s`);
+                        });
+                    }
+                    if ((jev && typeof jev === 'object') || missingLabels.length || phoneLines.length) {
+                        const parts = phoneLines.slice();
                         if (missingLabels.length) {
                             parts.push(`EPI ausente: ${missingLabels.join(', ')}`);
                             parts.push(`EPI obrigatório faltando: sim (${missingLabels.join(', ')})`);
