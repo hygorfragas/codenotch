@@ -10,12 +10,13 @@ services:
       - "8000:8000"
     environment:
       PHP_CLI_SERVER_WORKERS: "4"
+      JEV_URL: http://host.docker.internal:8787
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - snitch-data:/data
     depends_on:
       snitch-engine:
-        condition: service_healthy
-      snitch-jev:
         condition: service_healthy
     restart: unless-stopped
     healthcheck:
@@ -42,14 +43,13 @@ services:
       SNITCH_VISION_MOCK: ${SNITCH_VISION_MOCK:-1}
       SNITCH_LOOP_SOURCE: "1"
       SNITCH_STREAM_SOURCE: /clips/demo.avi
-      JEV_URL: http://snitch-jev:8787
+      JEV_URL: http://host.docker.internal:8787
       SH17_WEIGHTS: /weights/sh17.pt
       MPLCONFIGDIR: /tmp/matplotlib
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./snitch/storage/engine:/weights
-    depends_on:
-      snitch-jev:
-        condition: service_healthy
     restart: unless-stopped
     healthcheck:
       test:
@@ -65,6 +65,7 @@ services:
       start_period: 120s
 
   snitch-jev:
+    profiles: ["stub-jev"]
     build:
       context: .
       dockerfile: docker/jev/Dockerfile

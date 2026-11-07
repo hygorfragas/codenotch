@@ -45,7 +45,7 @@ CACHE_STORE=database
 MAIL_MAILER=log
 SNITCH_ENGINE_URL=http://snitch-engine:8765
 SH17_WEIGHTS=/weights/sh17.pt
-JEV_URL=http://snitch-jev:8787
+JEV_URL=http://host.docker.internal:8787
 EOF
 
 php -r '$pdo = new PDO("sqlite:/data/database.sqlite"); $pdo->exec("PRAGMA journal_mode=WAL;");'
