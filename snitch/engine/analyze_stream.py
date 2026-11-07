@@ -108,6 +108,12 @@ def display_class_name(name: str) -> str:
 DWELL_GRACE_SECONDS = 4.5
 DWELL_REID_PIXELS = 220.0
 ZONE_MIN_OVERLAP = 0.15
+YOLO_BASE_CONF = 0.10
+STRONG_CLASS_CONF = 0.25
+SMALL_PPE_CONF = 0.10
+PPE_MEMORY_SECONDS = 2.2
+SMALL_PPE_LABELS = frozenset({"goggles", "ear_protection", "mask", "gloves", "face-guard"})
+CROP_PPE_LABELS = frozenset({"goggles", "helmet", "mask", "ear_protection", "face-guard"})
 _BUNDLED_FONT = Path(__file__).resolve().parent / "fonts" / "DejaVuSans-Bold.ttf"
 FONT_CANDIDATES: tuple[Path, ...] = (
     _BUNDLED_FONT,
@@ -226,6 +232,61 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_device() -> str:
+    chosen = os.environ.get("SNITCH_YOLO_DEVICE", "").strip()
+    if chosen:
+        return chosen
+    try:
+        import torch
+    except Exception:  # noqa: BLE001
+        return "cpu"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _box_area(box: np.ndarray) -> float:
+    return max(0.0, float(box[2]) - float(box[0])) * max(0.0, float(box[3]) - float(box[1]))
+
+
+def _rects_overlap(left: tuple[int, int, int, int], right: tuple[int, int, int, int], pad: int = 2) -> bool:
+    return not (
+        left[2] + pad < right[0]
+        or right[2] + pad < left[0]
+        or left[3] + pad < right[1]
+        or right[3] + pad < left[1]
+    )
+
+
+def layout_detection_labels(
+    entries: list[tuple[str, int, int, tuple[int, int, int], tuple[float, float, float, float]]],
+) -> list[tuple[str, int, int, tuple[int, int, int]]]:
+    """Empilha rótulos que nasceriam no mesmo topo, para Pessoa não cobrir Cabeça."""
+    ranked = sorted(range(len(entries)), key=lambda index: _box_area(np.array(entries[index][4])), reverse=True)
+    placed: list[tuple[int, int, int, int]] = []
+    output: list[tuple[str, int, int, tuple[int, int, int]] | None] = [None] * len(entries)
+    for index in ranked:
+        text, x, y, color, box = entries[index]
+        width = max(16, int(len(text) * 8))
+        height = 22
+        x1, y1, x2, y2 = (int(box[0]), int(box[1]), int(box[2]), int(box[3]))
+        candidates = (
+            (int(x), int(y)),
+            (x2 + 4, y1),
+            (x1, y2 + 2),
+            (int(x), int(y) + height + 2),
+        )
+        chosen = candidates[0]
+        for origin in candidates:
+            rect = (origin[0], origin[1], origin[0] + width, origin[1] + height)
+            if not any(_rects_overlap(rect, other) for other in placed):
+                chosen = origin
+                break
+        placed.append((chosen[0], chosen[1], chosen[0] + width, chosen[1] + height))
+        output[index] = (text, chosen[0], max(0, chosen[1]), color)
+    return [item for item in output if item is not None]
+
+
 def _import_supervision():
     import supervision as sv
 
@@ -286,6 +347,10 @@ class StreamAnalyzer:
         self._config_inflight = False
         self._config_ts = 0.0
         self._occupancy: dict[tuple[str, int, str], dict[str, Any]] = {}
+        self._device = "cpu"
+        self._ppe_memory: dict[tuple[int, str], dict[str, Any]] = {}
+        self._roi_at: dict[int, float] = {}
+        self._inference_fps = 0.0
 
         sv = _import_supervision()
         if not config.mock:
@@ -298,9 +363,13 @@ class StreamAnalyzer:
                     "Defina SH17_WEIGHTS ou SNITCH_VISION_MOCK=1."
                 )
             self._model = YOLO(weights)
-            device = os.environ.get("SNITCH_YOLO_DEVICE", "").strip()
-            if device:
-                self._model.to(device)
+            self._device = _resolve_device()
+            try:
+                self._model.to(self._device)
+            except Exception:  # noqa: BLE001
+                self._device = "cpu"
+                self._model.to(self._device)
+            print(f"SH17 {weights} device={self._device}", file=sys.stderr, flush=True)
             for zone in config.zones:
                 self._polygon_zones.append(
                     (zone.name, sv.PolygonZone(polygon=zone.polygon))
@@ -326,10 +395,240 @@ class StreamAnalyzer:
             return self._mock_detections(frame)
 
         assert self._model is not None
-        results = self._model(frame, verbose=False)[0]
+        results = self._model(frame, verbose=False, conf=YOLO_BASE_CONF, imgsz=640, device=self._device)[0]
         import supervision as sv
 
-        return sv.Detections.from_ultralytics(results)
+        return self._filter_by_class_confidence(sv.Detections.from_ultralytics(results))
+
+    def _keep_detection(self, label: str, confidence: float, box: np.ndarray, anchors: list[np.ndarray]) -> bool:
+        if label in {"person", "head", "face"}:
+            return confidence >= STRONG_CLASS_CONF
+        if label in SMALL_PPE_LABELS:
+            if confidence < SMALL_PPE_CONF:
+                return False
+            if confidence >= STRONG_CLASS_CONF:
+                return True
+            return any(self._center_inside(box, anchor) for anchor in anchors)
+        return confidence >= STRONG_CLASS_CONF
+
+    def _center_inside(self, box: np.ndarray, outer: np.ndarray) -> bool:
+        cx = (float(box[0]) + float(box[2])) / 2
+        cy = (float(box[1]) + float(box[3])) / 2
+        return float(outer[0]) <= cx <= float(outer[2]) and float(outer[1]) <= cy <= float(outer[3])
+
+    def _filter_by_class_confidence(self, detections):
+        if detections.class_id is None or len(detections) == 0:
+            return detections
+        anchors = [
+            detections.xyxy[index]
+            for index, class_id in enumerate(detections.class_id)
+            if self._class_label(int(class_id)) in {"person", "head", "face"}
+            and float(detections.confidence[index]) >= STRONG_CLASS_CONF
+        ]
+        keep = [
+            index
+            for index, class_id in enumerate(detections.class_id)
+            if self._keep_detection(
+                self._class_label(int(class_id)),
+                float(detections.confidence[index]),
+                detections.xyxy[index],
+                anchors,
+            )
+        ]
+        if not keep:
+            return self._empty_detections()
+        return detections[keep]
+
+    def _class_id_for(self, label: str) -> int | None:
+        names = getattr(self._model, "names", None) if self._model is not None else None
+        if isinstance(names, dict):
+            for class_id, name in names.items():
+                if canonical_class_name(str(name)) == label or str(name) == label:
+                    return int(class_id)
+        if label in SH17_CLASS_NAMES:
+            return SH17_CLASS_NAMES.index(label)
+        return None
+
+    def _remember_ppe(
+        self,
+        tracker_id: int,
+        label: str,
+        box: np.ndarray,
+        anchor: np.ndarray,
+        class_id: int,
+        now: float,
+    ) -> None:
+        ax1, ay1, ax2, ay2 = (float(value) for value in anchor)
+        width = max(ax2 - ax1, 1.0)
+        height = max(ay2 - ay1, 1.0)
+        self._ppe_memory[(tracker_id, label)] = {
+            "until": now + PPE_MEMORY_SECONDS,
+            "class_id": int(class_id),
+            "rel": (
+                (float(box[0]) - ax1) / width,
+                (float(box[1]) - ay1) / height,
+                (float(box[2]) - ax1) / width,
+                (float(box[3]) - ay1) / height,
+            ),
+        }
+
+    def _recall_ppe(
+        self,
+        tracker_id: int,
+        label: str,
+        anchor: np.ndarray,
+        now: float,
+    ) -> tuple[list[float], int] | None:
+        record = self._ppe_memory.get((tracker_id, label))
+        if record is None or now > float(record["until"]):
+            self._ppe_memory.pop((tracker_id, label), None)
+            return None
+        ax1, ay1, ax2, ay2 = (float(value) for value in anchor)
+        width = max(ax2 - ax1, 1.0)
+        height = max(ay2 - ay1, 1.0)
+        rx1, ry1, rx2, ry2 = record["rel"]
+        return (
+            [ax1 + rx1 * width, ay1 + ry1 * height, ax1 + rx2 * width, ay1 + ry2 * height],
+            int(record["class_id"]),
+        )
+
+    def _facial_anchor(self, person_box: np.ndarray, parts) -> np.ndarray:
+        face = None
+        head = None
+        if parts is not None and parts.class_id is not None:
+            for index, class_id in enumerate(parts.class_id):
+                label = self._class_label(int(class_id))
+                box = parts.xyxy[index]
+                if not self._center_inside(box, person_box):
+                    continue
+                if label == "face":
+                    face = box
+                elif label == "head":
+                    head = box
+        if face is not None:
+            return np.array(face, dtype=np.float32)
+        if head is not None:
+            return np.array(head, dtype=np.float32)
+        x1, y1, x2, y2 = (float(value) for value in person_box)
+        return np.array([x1, y1, x2, y1 + 0.35 * (y2 - y1)], dtype=np.float32)
+
+    def _labels_inside(self, outer: np.ndarray, parts) -> set[str]:
+        found: set[str] = set()
+        if parts is None or parts.class_id is None:
+            return found
+        for index, class_id in enumerate(parts.class_id):
+            if self._center_inside(parts.xyxy[index], outer):
+                found.add(self._class_label(int(class_id)))
+        return found
+
+    def _infer_crop(self, frame: np.ndarray, anchor: np.ndarray) -> list[tuple[list[float], int, float, str]]:
+        height, width = frame.shape[:2]
+        x1, y1, x2, y2 = (float(value) for value in anchor)
+        cx = (x1 + x2) / 2
+        cy = (y1 + y2) / 2
+        box_w = max((x2 - x1) * 1.4, 24)
+        box_h = max((y2 - y1) * 1.4, 24)
+        left = max(0, int(cx - box_w / 2))
+        top = max(0, int(cy - box_h / 2))
+        right = min(width, int(cx + box_w / 2))
+        bottom = min(height, int(cy + box_h / 2))
+        if right - left < 12 or bottom - top < 12:
+            return []
+        crop = frame[top:bottom, left:right]
+        resized = cv2.resize(crop, (416, 416), interpolation=cv2.INTER_CUBIC)
+        assert self._model is not None
+        results = self._model(resized, verbose=False, conf=SMALL_PPE_CONF, imgsz=416, device=self._device)[0]
+        import supervision as sv
+
+        detections = sv.Detections.from_ultralytics(results)
+        if detections.class_id is None or len(detections) == 0:
+            return []
+        scale_x = (right - left) / 416
+        scale_y = (bottom - top) / 416
+        found: list[tuple[list[float], int, float, str]] = []
+        for index, class_id in enumerate(detections.class_id):
+            label = self._class_label(int(class_id))
+            confidence = float(detections.confidence[index])
+            if label not in CROP_PPE_LABELS or confidence < SMALL_PPE_CONF:
+                continue
+            box = detections.xyxy[index]
+            found.append((
+                [
+                    left + float(box[0]) * scale_x,
+                    top + float(box[1]) * scale_y,
+                    left + float(box[2]) * scale_x,
+                    top + float(box[3]) * scale_y,
+                ],
+                int(class_id),
+                confidence,
+                label,
+            ))
+        return found
+
+    def _append_detections(self, base, rows: list[tuple[list[float], int, float]]):
+        if not rows:
+            return base
+        import supervision as sv
+
+        extra_xyxy = np.array([row[0] for row in rows], dtype=np.float32)
+        extra_class = np.array([row[1] for row in rows], dtype=int)
+        extra_conf = np.array([row[2] for row in rows], dtype=np.float32)
+        if base.class_id is None or len(base) == 0:
+            return sv.Detections(xyxy=extra_xyxy, class_id=extra_class, confidence=extra_conf)
+        return sv.Detections(
+            xyxy=np.vstack([base.xyxy, extra_xyxy]),
+            class_id=np.concatenate([base.class_id, extra_class]),
+            confidence=np.concatenate([
+                base.confidence if base.confidence is not None else np.ones(len(base), dtype=np.float32),
+                extra_conf,
+            ]),
+        )
+
+    def _refine_facial_ppe(self, frame: np.ndarray, people, parts):
+        if people.tracker_id is None or len(people) == 0:
+            return parts
+        now = time.time()
+        added: list[tuple[list[float], int, float]] = []
+        crops = 0
+        for index, tracker_id in enumerate(people.tracker_id):
+            if tracker_id is None:
+                continue
+            tid = int(tracker_id)
+            person_box = people.xyxy[index]
+            anchor = self._facial_anchor(person_box, parts)
+            present = self._labels_inside(person_box, parts)
+            if "goggles" not in present and crops < 2 and now - self._roi_at.get(tid, 0.0) >= 0.15:
+                self._roi_at[tid] = now
+                crops += 1
+                for box, class_id, confidence, label in self._infer_crop(frame, anchor):
+                    added.append((box, class_id, confidence))
+                    present.add(label)
+                    self._remember_ppe(tid, label, np.array(box), anchor, class_id, now)
+            for label in CROP_PPE_LABELS:
+                if label in present:
+                    continue
+                recalled = self._recall_ppe(tid, label, anchor, now)
+                if recalled is None:
+                    continue
+                box, class_id = recalled
+                added.append((box, class_id, 0.2))
+                present.add(label)
+            for label in list(present):
+                if label not in CROP_PPE_LABELS:
+                    continue
+                # A fresh box inside the person updates the relative offset.
+                if parts.class_id is None:
+                    continue
+                for part_index, class_id in enumerate(parts.class_id):
+                    if self._class_label(int(class_id)) != label:
+                        continue
+                    if self._center_inside(parts.xyxy[part_index], person_box):
+                        self._remember_ppe(tid, label, parts.xyxy[part_index], anchor, int(class_id), now)
+                        break
+        expired = [key for key, record in self._ppe_memory.items() if now > float(record["until"])]
+        for key in expired:
+            self._ppe_memory.pop(key, None)
+        return self._append_detections(parts, added)
 
     def _class_label(self, class_id: int) -> str:
         names = getattr(self._model, "names", None) if self._model is not None else None
@@ -366,9 +665,9 @@ class StreamAnalyzer:
             text = self._box_label(int(class_id), tracker_id)
             if tracker_id is not None and missing_labels and missing_labels.get(tracker_id):
                 text = f"{text} · falta {', '.join(missing_labels[tracker_id])}"
-            x1, y1 = detections.xyxy[index][:2]
-            labels.append((text, int(x1), max(0, int(y1) - 22), (255, 255, 255)))
-        return draw_unicode_labels(annotated, labels)
+            x1, y1, x2, y2 = (float(value) for value in detections.xyxy[index])
+            labels.append((text, int(x1), max(0, int(y1) - 22), (255, 255, 255), (x1, y1, x2, y2)))
+        return draw_unicode_labels(annotated, layout_detection_labels(labels))
 
     def _zone_hits(self, detections) -> dict[int, list[str]]:
         hits: dict[int, list[str]] = {}
@@ -673,7 +972,12 @@ class StreamAnalyzer:
         return found
 
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
+        detect_started = time.perf_counter()
         people, parts = self._track_people_only(self._run_yolo(frame))
+        if not self.config.mock:
+            parts = self._refine_facial_ppe(frame, people, parts)
+        detect_elapsed = time.perf_counter() - detect_started
+        self._inference_fps = round(1.0 / detect_elapsed, 1) if detect_elapsed > 0 else 0.0
         zone_hits, dwell_exceeded, zone_dwell = self._zone_status(people, frame.shape[1], frame.shape[0])
         persons = self._persons_from_tracks(people, zone_hits, parts)
         state = build_jev_state(
@@ -699,6 +1003,9 @@ class StreamAnalyzer:
         if len(parts):
             annotated = self._annotate(annotated, parts)
         annotated = self._draw_zones(annotated, zone_dwell)
+        telemetry = dict(state.get("telemetry") or {})
+        telemetry["inference_fps"] = self._inference_fps
+        state["telemetry"] = telemetry
         if persons and not self.config.mock:
             self._maybe_record_episode(annotated, state)
         self._frame_index += 1
@@ -722,6 +1029,7 @@ class StreamAnalyzer:
                 "jev_updated_at": self._last_jev_ts,
                 "jev_latency_ms": self._last_jev_latency_ms,
                 "laya_engine": self._laya_engine,
+                "inference_fps": self._inference_fps,
             }
 
     def _schedule_jev(self, state: dict[str, Any], persons: list[TrackedPerson]) -> None:

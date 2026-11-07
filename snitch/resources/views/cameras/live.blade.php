@@ -134,7 +134,8 @@
                         const laya = info.laya_engine || 'aguardando';
                         const latency = info.jev_latency_ms == null ? '—' : `${Math.round(info.jev_latency_ms)} ms`;
                         const updated = info.jev_updated_at ? new Date(info.jev_updated_at * 1000).toLocaleTimeString() : '—';
-                        telemetry.textContent = `FPS ${info.fps ?? localFps} · Memória: último quadro (sem acúmulo) · Laya ${laya} · ${latency} · atualizado ${updated}`;
+                        const infer = info.inference_fps == null ? '—' : `${info.inference_fps} FPS`;
+                        telemetry.textContent = `FPS ${info.fps ?? localFps} · Inferência ${infer} · Memória: último quadro (sem acúmulo) · Laya ${laya} · ${latency} · atualizado ${updated}`;
                         lastFrameAt = now;
                     }
                     const jev = payload.state && payload.state.jev;
@@ -245,13 +246,14 @@
                     ctx.stroke();
                     ctx.fillStyle = color.replace('1)', '0.18)');
                     ctx.fill();
+                    if (!title) return;
                     const [x, y] = toCanvas(points[0]);
                     ctx.fillStyle = '#e2e8f0';
                     ctx.font = '13px sans-serif';
                     ctx.fillText(title, x + 6, y + 16);
                 };
                 zones.forEach((zone) => {
-                    drawPoly(zone.polygon || [], zoneStroke(zone), zoneCaption(zone));
+                    drawPoly(zone.polygon || [], zoneStroke(zone), '');
                 });
                 if (draft.length) {
                     drawPoly(draft, 'rgba(250,204,21,1)', 'Nova zona');
