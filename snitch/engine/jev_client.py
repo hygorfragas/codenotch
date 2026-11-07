@@ -31,9 +31,12 @@ async def ask_jev(
         await client.post("/state", json=state)
 
         async def one(question: str) -> tuple[str, Any]:
-            response = await client.post("/ask", json={"question": question})
-            response.raise_for_status()
-            body = response.json()
+            try:
+                response = await client.post("/ask", json={"question": question})
+                response.raise_for_status()
+                body = response.json()
+            except Exception:  # noqa: BLE001 — uma pergunta desconhecida não apaga as outras
+                return question, None
             return question, body.get("answer", body)
 
         pairs = await asyncio.gather(*(one(q) for q in questions))
