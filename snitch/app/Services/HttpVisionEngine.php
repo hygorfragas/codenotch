@@ -31,11 +31,13 @@ class HttpVisionEngine implements VisionEngine
         $upstream = $base.$path;
 
         return response()->stream(function () use ($upstream): void {
+            $readTimeout = (float) config('snitch.vision.read_timeout_seconds');
             $context = stream_context_create([
                 'http' => [
                     'method' => 'GET',
                     'header' => "Accept: text/event-stream\r\n",
-                    'timeout' => (float) config('snitch.vision.read_timeout_seconds'),
+                    // timeout 0 no PHP abre e falha na hora. 0 na config = SSE longo.
+                    'timeout' => $readTimeout > 0 ? $readTimeout : 86400,
                 ],
             ]);
 

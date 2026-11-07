@@ -37,16 +37,19 @@
         </section>
 
         <section aria-labelledby="episodes-heading" class="rounded-xl border border-slate-800 bg-slate-900/40 p-5">
-            <h2 id="episodes-heading" class="text-lg font-semibold text-white">Episódios recentes</h2>
-            <p class="mt-1 text-sm text-slate-400">Sem identificação do colaborador (visão global).</p>
+            <div class="flex items-center justify-between gap-3">
+                <h2 id="episodes-heading" class="text-lg font-semibold text-white">Episódios recentes</h2>
+                <button type="button" id="refresh-now" class="rounded-md border border-slate-700 px-3 py-1 text-sm text-slate-200">Atualizar agora</button>
+            </div>
+            <p class="mt-1 text-sm text-slate-400">Ao vivo · a lista atualiza a cada 5 segundos. Sem identificação do colaborador.</p>
             <ul class="mt-4 space-y-3">
                 @forelse ($episodes as $episode)
                     <li class="flex gap-3 rounded-lg border border-slate-800/80 bg-slate-950/40 p-3">
                         @if ($episode->photo)
-                            <img src="{{ $episode->photo }}" alt="" class="h-14 w-24 shrink-0 rounded object-cover" loading="lazy">
+                            <img src="{{ $episode->thumbnailSrc() }}" alt="" class="h-14 w-24 shrink-0 rounded object-cover" loading="lazy">
                         @endif
                         <div class="min-w-0 flex-1">
-                            <p class="text-sm font-medium capitalize text-slate-100">{{ $episode->type }} · {{ $episode->subtype }}</p>
+                            <p class="text-sm font-medium text-slate-100">{{ $episode->episodeSummary() }}</p>
                             <p class="text-xs text-slate-400">{{ $episode->recorded_at->timezone(config('app.timezone'))->format('d/m/Y H:i') }}</p>
                             <p class="truncate text-xs text-slate-500">Localidade #{{ $episode->location_id }}</p>
                         </div>
@@ -58,3 +61,10 @@
         </section>
     </div>
 @endsection
+
+@push('scripts')
+    <script>
+        document.getElementById('refresh-now')?.addEventListener('click', () => location.reload());
+        setInterval(() => location.reload(), 5000);
+    </script>
+@endpush

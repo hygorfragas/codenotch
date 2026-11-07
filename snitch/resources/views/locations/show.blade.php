@@ -40,14 +40,17 @@
         </section>
 
         <section aria-labelledby="location-episodes-heading" class="rounded-xl border border-slate-800 bg-slate-900/40 p-5 xl:col-span-1">
-            <h2 id="location-episodes-heading" class="text-lg font-semibold text-white">Episódios</h2>
+            <div class="flex items-center justify-between gap-3">
+                <h2 id="location-episodes-heading" class="text-lg font-semibold text-white">Episódios</h2>
+                <button type="button" id="refresh-now" class="rounded-md border border-slate-700 px-3 py-1 text-sm text-slate-200">Atualizar agora</button>
+            </div>
             <ul class="mt-4 space-y-3">
                 @forelse ($episodes as $episode)
                     <li class="rounded-lg border border-slate-800/80 bg-slate-950/40 p-3">
                         <p class="text-sm font-medium text-slate-100">
                             {{ $episode->employee?->name ?? 'Sem vínculo' }}
                             <span class="text-slate-500">·</span>
-                            <span class="capitalize">{{ $episode->type }}</span>
+                            <span>{{ $episode->episodeSummary() }}</span>
                         </p>
                         <p class="text-xs text-slate-400">{{ $episode->recorded_at->format('d/m/Y H:i') }}</p>
                     </li>
@@ -78,3 +81,10 @@
         </section>
     </div>
 @endsection
+
+@push('scripts')
+    <script>
+        document.getElementById('refresh-now')?.addEventListener('click', () => location.reload());
+        setInterval(() => location.reload(), 5000);
+    </script>
+@endpush

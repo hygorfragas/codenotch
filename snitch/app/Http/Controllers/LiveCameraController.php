@@ -57,13 +57,24 @@ class LiveCameraController extends Controller
 
     public function panel(int $camera): View
     {
-        $model = Camera::query()->with('location.company')->findOrFail($camera);
+        $model = Camera::query()->with(['location.company.employees', 'trackerLinks.employee'])->findOrFail($camera);
+        $publicEngine = rtrim((string) env('SNITCH_ENGINE_PUBLIC_URL', 'http://127.0.0.1:8765'), '/');
 
         return view('cameras.live', [
             'camera' => $model,
             'location' => $model->location,
             'company' => $model->location->company,
             'streamUrl' => route('snitch.cameras.stream', $model),
+            'engineStreamUrl' => $publicEngine.'/cameras/'.$model->id.'/stream',
+            'employees' => $model->location->company->employees,
+            'trackerLinks' => $model->trackerLinks,
+            'zones' => $model->zones->map(fn ($zone): array => [
+                'id' => $zone->id,
+                'name' => $zone->name,
+                'type' => $zone->type->value,
+                'max_dwell_seconds' => $zone->max_dwell_seconds,
+                'polygon' => $zone->polygon,
+            ])->values(),
         ]);
     }
 

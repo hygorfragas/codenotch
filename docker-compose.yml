@@ -1,0 +1,101 @@
+name: snitch
+
+services:
+  snitch-web:
+    build:
+      context: .
+      dockerfile: docker/web/Dockerfile
+    image: snitch-web:local
+    ports:
+      - "8000:8000"
+    environment:
+      PHP_CLI_SERVER_WORKERS: "8"
+      JEV_URL: http://host.docker.internal:8787
+      SNITCH_ENGINE_PUBLIC_URL: http://127.0.0.1:8765
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - snitch-data:/data
+      - ./snitch/app:/var/www/html/app
+      - ./snitch/resources:/var/www/html/resources
+      - ./snitch/routes:/var/www/html/routes
+      - ./snitch/bootstrap:/var/www/html/bootstrap
+      - ./snitch/config:/var/www/html/config
+      - ./snitch/tests:/var/www/html/tests
+      - ./docker/web/entrypoint.sh:/entrypoint.sh
+    depends_on:
+      snitch-engine:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "php",
+          "-r",
+          "exit(@file_get_contents('http://127.0.0.1:8000/up') === false ? 1 : 0);",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  snitch-engine:
+    build:
+      context: .
+      dockerfile: docker/engine/Dockerfile
+    image: snitch-engine:local
+    ports:
+      - "8765:8765"
+    environment:
+      SNITCH_VISION_MOCK: ${SNITCH_VISION_MOCK:-0}
+      SNITCH_LOOP_SOURCE: "1"
+      SNITCH_STREAM_SOURCE: /weights/person-loop.avi
+      JEV_URL: http://host.docker.internal:8787
+      SNITCH_WEB_URL: http://snitch-web:8000
+      SNITCH_LOCATION_ID: "2"
+      SH17_WEIGHTS: /weights/sh17.pt
+      MPLCONFIGDIR: /tmp/matplotlib
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./snitch/storage/engine:/weights
+      - ./snitch/engine:/opt/snitch/engine
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 120s
+
+  snitch-jev:
+    profiles: ["stub-jev"]
+    build:
+      context: .
+      dockerfile: docker/jev/Dockerfile
+    image: snitch-jev:local
+    ports:
+      - "8787:8787"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8787/health', timeout=2)",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  snitch-data:

@@ -3,7 +3,7 @@
 <!-- specsfy:documentator:start -->
 ## Resumo
 
-- Arquivos de teste: 20.
+- Arquivos de teste: 29.
 - Runner: PHPUnit.
 - Scripts: não declarados.
 
@@ -20,10 +20,19 @@
 | snitch/tests/Feature/Snitch/Ac006Test.php |
 | snitch/tests/Feature/Snitch/Ac007Test.php |
 | snitch/tests/Feature/Snitch/Ac008Test.php |
+| snitch/tests/Feature/Snitch/Ac009Test.php |
+| snitch/tests/Feature/Snitch/Ac010Test.php |
+| snitch/tests/Feature/Snitch/Ac011Test.php |
 | snitch/tests/Feature/Snitch/Ac012Test.php |
 | snitch/tests/Feature/Snitch/Ac013Test.php |
 | snitch/tests/Feature/Snitch/Ac014Test.php |
 | snitch/tests/Feature/Snitch/Ac015Test.php |
+| snitch/tests/Feature/Snitch/Ac016Test.php |
+| snitch/tests/Feature/Snitch/Ac017Test.php |
+| snitch/tests/Feature/Snitch/Ac018Test.php |
+| snitch/tests/Feature/Snitch/Ac019Test.php |
+| snitch/tests/Feature/Snitch/Ac020Test.php |
+| snitch/tests/Feature/Snitch/Ac021Test.php |
 | snitch/tests/Pest.php |
 | snitch/tests/SnitchFeatureTestCase.php |
 | snitch/tests/Support/SnitchTestSeeder.php |

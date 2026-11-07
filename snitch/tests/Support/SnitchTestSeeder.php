@@ -34,5 +34,16 @@ class SnitchTestSeeder
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
+        DB::table('cameras')->insert([
+            'id' => 1,
+            'location_id' => 1,
+            'name' => 'Camera Teste',
+            'sector' => 'Acesso',
+            'stream_url' => 'rtsp://example.test/stream',
+            'credential' => encrypt('secret-not-in-ui'),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
     }
 }

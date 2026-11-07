@@ -15,6 +15,16 @@ class Camera extends Model
     /** @use HasFactory<CameraFactory> */
     use HasFactory, SoftDeletes;
 
+    protected static function booted(): void
+    {
+        static::deleting(function (Camera $camera): void {
+            $camera->forceFill([
+                'credential' => null,
+                'dvr_url' => null,
+            ])->saveQuietly();
+        });
+    }
+
     protected $fillable = [
         'location_id',
         'name',

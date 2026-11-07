@@ -1,0 +1,14 @@
+.git
+**/.DS_Store
+**/node_modules
+**/vendor
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.testing
+**/storage/logs
+**/storage/framework/cache
+**/storage/framework/sessions
+**/storage/framework/views
+**/*.sqlite
+**/*.pt

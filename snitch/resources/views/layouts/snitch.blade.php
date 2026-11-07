@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'SNITCH') — Encarregado Virtual</title>
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
@@ -17,6 +18,10 @@
                 <a href="{{ route('snitch.company.dashboard') }}"
                    class="rounded-md px-3 py-2 {{ request()->routeIs('snitch.company.dashboard') ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-900' }}">
                     Painel global
+                </a>
+                <a href="{{ route('snitch.settings.index') }}"
+                   class="rounded-md px-3 py-2 {{ request()->routeIs('snitch.settings.*') ? 'bg-slate-800 text-white' : 'text-slate-300 hover:bg-slate-900' }}">
+                    Configurações
                 </a>
                 @isset($company)
                     <span class="hidden items-center text-slate-500 sm:flex" aria-hidden="true">/</span>

@@ -31,6 +31,12 @@ class Employee extends Model
         return $this->hasMany(Episode::class);
     }
 
+    /** @return HasMany<EmployeeAttachment, $this> */
+    public function attachments(): HasMany
+    {
+        return $this->hasMany(EmployeeAttachment::class);
+    }
+
     /** @return HasMany<TrackerLink, $this> */
     public function trackerLinks(): HasMany
     {

@@ -7,8 +7,8 @@ Os diagramas são exemplos de formato. Eles não representam relações confirma
 
 | Tipo | Quantidade |
 | --- | --- |
-| Código | 130 |
-| Testes | 20 |
+| Código | 139 |
+| Testes | 29 |
 
 ## Diagramas
 
