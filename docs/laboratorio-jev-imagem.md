@@ -187,3 +187,110 @@ O Antes da manhã não tinha a camada de celular nem a pose. A pose deixou de ro
 | Agora, parado, celular ligado | 27,0 | 25,8 | 38,0 | 36,9 |
 
 Parado sem celular ficou acima do Antes. Movimento com celular ligado empata o p50 de inferência do Antes (37,1) e fica acima no p5. Movimento sem celular fica 0,6 abaixo no p50 de inferência (36,5 contra 37,1), dentro da oscilação desta tarde. Parado com celular ligado fica abaixo do Antes parado, porque o nano custa cerca de 6 ms no quadro em que varre. O S não participou dessa conta.
+
+## Braço E, só com o cache
+
+Nenhuma chamada nova. As 675 respostas já estavam no cache, e as quatro classes de EPI e os 66 celulares bateram com o arquivo do hash. Faltou zero imagem. O gasto continua cerca de US$ 0,0677.
+
+Regra: o marco decide. O JEV entra quando o marco diria "sem", ou quando vale a dúvida do D (juiz indeterminado, ou detecção com confiança abaixo de 0,35). Fora isso, fica a resposta do marco.
+
+| Item | n | Chamadas | Taxa | A acurácia | C acurácia | D acurácia | E acurácia | E precisão do sem |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Capacete | 200 | 86 | 0,43 | 0,86 | 0,96 | 0,93 | 0,96 | 0,86 |
+| Óculos | 103 | 85 | 0,83 | 0,40 | 0,87 | 0,80 | 0,80 | 0,78 |
+| Luva | 134 | 113 | 0,84 | 0,80 | 0,94 | 0,93 | 0,94 | 0,86 |
+| Colete | 175 | 89 | 0,51 | 0,82 | 0,98 | 0,93 | 0,98 | 0,93 |
+
+No capacete, na luva e no colete, E alcança C e passa D, porque também manda ao JEV o "sem" que D ainda confiava ao marco. No óculos, E fica em D (0,80) e abaixo de C (0,87): quando o marco diz "com" com confiança, E não pergunta, e nesse conjunto esse "com" erra bastante.
+
+### Por faixa
+
+| Item | Faixa | n | Taxa | A | C | D | E | E precisão do sem |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Capacete | Longe | 30 | 0,30 | 0,87 | 0,90 | 0,90 | 0,90 | 0,25 |
+| Capacete | Média | 93 | 0,30 | 0,83 | 0,98 | 0,98 | 0,98 | 0,83 |
+| Capacete | Perto | 77 | 0,64 | 0,88 | 0,96 | 0,88 | 0,96 | 0,93 |
+| Óculos | Longe | 3 | 1,00 | 0,33 | 1,00 | 1,00 | 1,00 | 1,00 |
+| Óculos | Média | 56 | 0,93 | 0,16 | 0,89 | 0,82 | 0,82 | 0,50 |
+| Óculos | Perto | 44 | 0,68 | 0,70 | 0,84 | 0,75 | 0,75 | 0,89 |
+| Luva | Longe | 10 | 0,90 | 0,80 | 0,80 | 0,80 | 0,80 | 0,00 |
+| Luva | Média | 75 | 0,77 | 0,75 | 0,95 | 0,95 | 0,95 | 0,69 |
+| Luva | Perto | 49 | 0,94 | 0,88 | 0,96 | 0,94 | 0,96 | 0,97 |
+| Colete | Longe | 21 | 0,43 | 0,76 | 0,95 | 0,95 | 0,95 | 0,75 |
+| Colete | Média | 91 | 0,35 | 0,79 | 0,97 | 0,97 | 0,97 | 0,80 |
+| Colete | Perto | 63 | 0,76 | 0,87 | 1,00 | 0,87 | 1,00 | 1,00 |
+
+A coluna A/C/D/E é a acurácia. Longe de óculos continua com 3 imagens. Longe de luva, E chama em 9 de 10 e mesmo assim a precisão do sem fica 0: o JEV também não sustenta a acusação.
+
+Nas 208 fotos, E pediria 126 recortes de cabeça e 139 de pessoa: 265 imagens, 1,27 por foto.
+
+### Celular com o detector deste branch
+
+Nano a 0,20 e, só se ele vê um aparelho perto do corpo, YOLOv8s a 0,25. É o caminho de `e35ed7f`. Quando os dois veem celular, o JEV do cache confirma ou nega o uso. Sem isso, E diz que não há uso e não chama.
+
+O detector viu celular em 8 dos 66 recortes (taxa 0,12). Nenhum ficou fora do cache.
+
+| Faixa | n | A / D acurácia | C acurácia | E acurácia | E recall do uso |
+| --- | --- | --- | --- | --- | --- |
+| Longe | 14 | 0,93 | 0,93 | 0,93 | 0,00 |
+| Média | 9 | 0,78 | 0,78 | 0,78 | 0,00 |
+| Perto | 29 | 0,41 | 0,76 | 0,52 | 0,18 |
+| Sem cabeça | 14 | 0,71 | 0,79 | 0,79 | 0,25 |
+| Todas | 66 | 0,64 | 0,80 | 0,70 | 0,17 |
+
+No total, a precisão do uso em E é 1,00: não houve confirmação falsa. O recall fica em 0,17 porque o detector local deixa passar a maior parte dos usos, e E só pergunta nesses 8. Foto parada continua sem medir "mexendo". Os 12% não servem de taxa de fábrica: 24 das 66 fotos são uso de propósito.
+
+### Projeção mensal do braço E
+
+As premissas anteriores valem. A taxa nova é 1,27 imagens por foto com pessoa, medida nas 208 imagens de EPI (cabeça e pessoa contam separado quando cada uma dispara).
+
+| Modo | Imagens no mês | Custo | Cabe nos US$ 5 |
+| --- | --- | --- | --- |
+| 1 ciclo por segundo, com os recortes que E pediria | cerca de 807 mil | US$ 80,72 | não |
+| No máximo 1 ciclo a cada 17 s | cerca de 47 mil | US$ 4,75 | sim |
+| 30 eventos por dia, 1,27 recortes cada (hipótese) | 838 | US$ 0,08 | sim |
+
+Um ciclo é uma olhada na pessoa. Os US$ 5 pagam 50.000 imagens: com 1,27 recortes por olhada, isso é uma olhada a cada 16 s. A linha de 17 s fica em US$ 4,75.
+
+## Abafador e plug
+
+Não rodei A–E. Não há conjunto público com positivo e negativo que dê para baixar sem conta.
+
+O que falta, em concreto:
+
+- O SH17 tem a classe `ear-mufs`, mas as imagens e os rótulos não estão no GitHub. O repositório público só tem o `sh17.yaml` e um script que baixa fotos do Pexels, sem as caixas. O arquivo completo está no Kaggle e no Zenodo, e o Zenodo marca os arquivos como restritos. Não há `kaggle.json` nesta máquina, e não criei conta.
+- Abafador no Roboflow: o conjunto "Earmuff Detector 2" (154 imagens, treino/validação/teste) responde 403 sem chave. Os outros conjuntos de abafador e de plug do Universe também exigem API key para exportar. Não há chave da Roboflow aqui.
+- No Hugging Face, os datasets com "earplug" no nome são vídeos de braço robótico, sem rótulo de com plug e sem plug.
+
+Para medir, precisa de um destes: acesso ao val do SH17 (Kaggle ou Zenodo), ou uma API key da Roboflow para um conjunto que tenha as duas classes, com e sem. Não gastei os US$ 0,10 reservados para isso.
+
+## Protocolo de vídeo para o Hygor
+
+A faixa é a altura da caixa da cabeça, em px, no quadro que a webcam entrega. No Mac ela costuma abrir em 1280×720. A Apple não publica o ângulo da FaceTime do MacBook Air M3. A conta abaixo usa quadro de 720 px de altura, cabeça de 23 cm e um campo vertical de 48°. Se o primeiro clipe sair em 1920×1080, multiplique os metros por 1,5 e mantenha os px.
+
+| Faixa | Cabeça na tela | Onde começar |
+| --- | --- | --- |
+| Perto | 140 a 200 px (alvo 160) | 1,2 m |
+| Média | 70 a 100 px (alvo 80) | 2,3 m |
+| Longe | 35 a 50 px (alvo 40) | 4,7 m |
+
+Ajuste o passo até a caixa da cabeça cair no intervalo. O px manda, o metro é o ponto de partida. Câmera na altura dos olhos, pessoa no centro, do peito para cima.
+
+Luz igual nos 24 clipes: lâmpada ou janela na frente do rosto, sem contra-luz, sem chapéu. Orelha visível nos clipes de plug e de orelha livre. Não misture abafador e plug no mesmo clipe.
+
+Cada clipe dura 10 segundos. São 8 por faixa, 24 no total.
+
+| Arquivo | O que fazer |
+| --- | --- |
+| `{faixa}-celular-mexendo.mp4` | Celular na mão, dedos na tela, longe da orelha |
+| `{faixa}-celular-olhando.mp4` | Rosto virado para a tela, aparelho parado |
+| `{faixa}-celular-orelha.mp4` | Aparelho encostado na orelha |
+| `{faixa}-celular-na-mao.mp4` | Segura o celular e não olha nem mexe |
+| `{faixa}-sem-celular.mp4` | Mãos vazias |
+| `{faixa}-com-abafador.mp4` | Abafador supra-auricular, sem plug |
+| `{faixa}-com-plug.mp4` | Plug intra-auricular visível, sem abafador |
+| `{faixa}-orelhas-livres.mp4` | Sem abafador e sem plug |
+
+`{faixa}` é `perto`, `media` ou `longe`.
+
+Salvar em `snitch/storage/engine/lab-video/`. Essa pasta já fica de fora do git. Não renomeie no meio: o próximo laboratório lê esse nome.
