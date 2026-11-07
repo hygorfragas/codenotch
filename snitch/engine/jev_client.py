@@ -9,7 +9,18 @@ from typing import Any
 
 import httpx
 
+from jev_image import JevImageClient, noul_is_true
 from jev_metrics import jev_metrics
+
+IMAGE_QUESTIONS = {
+    "helmet": "Is a safety helmet or hard hat being worn on the head in `photo`? True only when the helmet is visibly on the head. False when the head is bare.",
+    "goggles": "Are protective goggles or safety glasses being worn over the eyes in `photo`? False when the eyes are uncovered.",
+    "gloves": "Are protective work gloves being worn on the hands in `photo`? False for bare hands.",
+    "vest": "Is a high-visibility safety vest being worn on the torso in `photo`? False when the torso has no safety vest.",
+    "phone": "Is the person using a smartphone, by tapping it, looking at the screen, or holding it against the ear? A phone held still and ignored, or no phone at all, is false.",
+}
+
+_image_client: JevImageClient | None = None
 
 DEFAULT_TIMEOUT = httpx.Timeout(5.0, connect=2.0)
 
@@ -121,3 +132,39 @@ def ask_jev_sync(
 ) -> dict[str, Any]:
     """Wrapper síncrono para uso dentro do loop de vídeo."""
     return asyncio.run(ask_jev(base_url, state, questions))
+
+
+def image_client() -> JevImageClient:
+    global _image_client
+    if _image_client is None:
+        _image_client = JevImageClient()
+    return _image_client
+
+
+def ask_image(jpeg: bytes, questions: dict[str, str], *, trigger: str) -> dict[str, Any]:
+    """Manda um JPEG ao JEV. Não registra a chave nem a imagem."""
+    started = time.perf_counter()
+    result = image_client().ask_jpeg(jpeg, questions)
+    answers = result.get("answers") if isinstance(result.get("answers"), dict) else {}
+    summary: list[str] = []
+    for name in questions:
+        flag = noul_is_true(answers.get(name))
+        if name == "phone":
+            label = "uso" if flag else "nao_uso"
+        else:
+            label = "com" if flag else "sem"
+        if flag is not None:
+            summary.append(f"{name}:{label}")
+    ledger = image_client().ledger
+    _record_call(
+        endpoint="/v1/systemone",
+        trigger=trigger,
+        payload={"bytes": len(jpeg), "itens": list(questions)},
+        started=started,
+        status=str(result.get("status")),
+        decision=",".join(summary)[:80] or None,
+    )
+    result["resumo"] = summary
+    result["enviadas"] = ledger.get("images_sent")
+    result["usd"] = ledger.get("usd")
+    return result

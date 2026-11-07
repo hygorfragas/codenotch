@@ -58,6 +58,36 @@ def nearest(origin: tuple[float, float] | None, points: list[tuple[float, float]
     return min(_hypot(origin, point) for point in points)
 
 
+def head_lowered(pose: dict[str, Any], head_height: float) -> bool:
+    """Nariz bem abaixo dos olhos: a pessoa olha para baixo, onde um celular costuma estar."""
+    nose = pose.get("nose")
+    eyes = pose.get("eyes") or []
+    if nose is None or not eyes:
+        return False
+    eye_y = sum(point[1] for point in eyes) / len(eyes)
+    return nose[1] > eye_y + 0.12 * max(head_height, 1.0)
+
+
+def hand_near_face(pose: dict[str, Any], head_height: float) -> bool:
+    """Pulso perto da orelha ou do nariz, na mesma escala da cabeça."""
+    wrists = pose.get("wrists") or []
+    targets = list(pose.get("ears") or [])
+    if pose.get("nose") is not None:
+        targets.append(pose["nose"])
+    if not wrists or not targets:
+        return False
+    limit = 0.75 * max(head_height, 1.0)
+    for wrist in wrists:
+        distance = nearest(wrist, targets)
+        if distance is not None and distance <= limit:
+            return True
+    return False
+
+
+def phone_pose_trigger(pose: dict[str, Any], head_height: float) -> bool:
+    return head_lowered(pose, head_height) or hand_near_face(pose, head_height)
+
+
 def face_toward_phone(pose: dict[str, Any], phone: tuple[float, float] | None, head_height: float) -> bool:
     nose = pose.get("nose")
     if nose is None or phone is None:

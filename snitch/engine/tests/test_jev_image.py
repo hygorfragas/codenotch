@@ -43,6 +43,20 @@ def test_the_same_jpeg_is_not_charged_twice_and_the_ceiling_stops_the_next_one(t
     assert noul_is_true(first["answers"]["solid"]) is True
 
 
+def test_the_default_client_does_not_stop_at_a_spending_ceiling(tmp_path):
+    calls = []
+
+    def transport(jpeg, questions):
+        calls.append(jpeg)
+        return 200, {"answers": {"solid": {"type": "noul", "noul": 0.2}}, "usage": {}}, 1.0
+
+    client = JevImageClient(cache_dir=tmp_path, transport=transport)
+    assert client.ceiling_usd is None
+    assert client.ask_jpeg(b"one", {"solid": "q"})["charged"] is True
+    assert client.ask_jpeg(b"two", {"solid": "q"})["charged"] is True
+    assert len(calls) == 2
+
+
 def test_a_failed_key_does_not_spend_the_budget(tmp_path):
     def transport(jpeg, questions):
         return 401, {"error": "unauthorized"}, 5.0

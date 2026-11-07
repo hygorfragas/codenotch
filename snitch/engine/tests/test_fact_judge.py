@@ -4,7 +4,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from fact_judge import judge_facts  # noqa: E402
+from fact_judge import judge_facts, needs_image_review, review_is_due  # noqa: E402
 
 
 def _person(**extra):
@@ -48,6 +48,18 @@ def test_a_visible_head_without_votes_is_missing_and_a_far_head_is_not():
 def test_an_earplug_without_a_detector_is_never_an_infraction():
     verdict = judge_facts({"persons": [_person(items={"earplug": _item(detector=False)})]})
     assert verdict["persons"][0]["ppe"]["earplug"]["status"] == "indeterminado"
+
+
+def test_image_review_follows_the_event_rule():
+    assert needs_image_review("helmet", "sem", 0.9, False) == "sem"
+    assert needs_image_review("vest", "indeterminado", 0.0, False) == "duvida"
+    assert needs_image_review("gloves", "com", 0.2, True) == "duvida"
+    assert needs_image_review("helmet", "com", 0.8, True) is None
+    assert needs_image_review("goggles", "com", 0.9, True) == "sempre"
+    assert needs_image_review("boots", "sem", 0.0, False) is None
+    assert review_is_due(10.0, 12.4) is False
+    assert review_is_due(10.0, 12.5) is True
+    assert review_is_due(None, 12.5) is False
 
 
 def test_phone_at_the_ear_is_use_and_a_still_hand_is_not():

@@ -26,11 +26,18 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from fact_judge import judge_facts
-from jev_client import ask_jev_sync
+from fact_judge import (
+    IMAGE_PERSIST_SECONDS,
+    IMAGE_REQUALIFY_SECONDS,
+    judge_facts,
+    needs_image_review,
+    review_is_due,
+)
+from jev_client import IMAGE_QUESTIONS, ask_image, ask_jev_sync
+from jev_image import crop_box, encode_jpeg, noul_is_true
 from jev_metrics import jev_metrics
 from phone_watch import PhoneClock, PhoneSighting, phone_near_body
-from pose_read import describe_pose, face_toward_phone, nearest
+from pose_read import describe_pose, face_toward_phone, nearest, phone_pose_trigger
 from state_builder import TrackedPerson, build_jev_state
 
 # Classes SH17 (17 EPIs / partes corporais) — ordem alinhada ao dataset público.
@@ -120,6 +127,9 @@ SMALL_PPE_CONF = 0.10
 GLASSES_ZOOM_INTERVAL = 0.6
 VOTE_WINDOW = 5
 VOTE_NEED = 3
+NANO_PHONE_CONF = 0.10
+HEAD_REVIEW = frozenset({"helmet", "goggles"})
+BODY_REVIEW = frozenset({"vest", "gloves"})
 PPE_NMS_IOU = 0.40
 SMALL_PPE_LABELS = frozenset({"goggles", "ear_protection", "mask", "gloves", "face-guard"})
 CROP_PPE_LABELS = frozenset({"goggles", "helmet", "mask", "ear_protection", "face-guard"})
@@ -416,6 +426,8 @@ class StreamAnalyzer:
         self._phone_candidates: dict[int, float] = {}
         self._pose_at: dict[int, float] = {}
         self._pose_clock = 0.0
+        self._image_books: dict[int, dict[str, Any]] = {}
+        self._image_lock = threading.Lock()
         self._phone_at = 0.0
         self._phone_cursor = 0
         self._phone_seen: dict[int, float] = {}
@@ -1391,6 +1403,8 @@ class StreamAnalyzer:
         return found
 
     def _watch_phone(self, frame: np.ndarray, people, parts) -> None:
+        """O celular não entra no quadro. A sonda assíncrona está em _phone_probe_job, sem o v8s."""
+        return
         self._phone_crop = None
         now = time.time()
         self._phone_candidates = {
@@ -1729,7 +1743,7 @@ class StreamAnalyzer:
         if people.tracker_id is None or len(people) == 0:
             self._facts = {"persons": []}
             return
-        poses = self._poses(frame, people, parts)
+        poses: dict[int, dict[str, Any]] = {}
         persons = []
         limit = self._smartphone.get("hand_limit_seconds")
         try:
@@ -1780,14 +1794,14 @@ class StreamAnalyzer:
         self._verdict = verdict
         self._schedule_judge(facts, signature)
         sightings: list[PhoneSighting] = []
-        by_id = {int(person["tracker_id"]): person for person in verdict.get("persons") or []}
-        for person in persons:
-            phone = (by_id.get(person["tracker_id"]) or {}).get("phone") or {}
-            if int((person.get("phone") or {}).get("votes_present") or 0) <= 0 and phone.get("status") != "uso":
-                continue
-            box = people.xyxy[list(people.tracker_id).index(person["tracker_id"])]
-            center = ((float(box[0]) + float(box[2])) / 2, (float(box[1]) + float(box[3])) / 2)
-            sightings.append(PhoneSighting(person["tracker_id"], center, True, phone.get("status") == "uso"))
+        if self._smartphone.get("enabled"):
+            for person in persons:
+                saved = self._image_answer(int(person["tracker_id"]), "phone")
+                if not saved or saved.get("status") != "uso":
+                    continue
+                box = people.xyxy[list(people.tracker_id).index(person["tracker_id"])]
+                center = ((float(box[0]) + float(box[2])) / 2, (float(box[1]) + float(box[3])) / 2)
+                sightings.append(PhoneSighting(person["tracker_id"], center, True, True))
         self._phone_tracks = self._phone_clock.update(sightings, now, limit_s) if self._smartphone.get("enabled") else []
 
     def _schedule_judge(self, facts: dict[str, Any], signature: str) -> None:
@@ -1834,6 +1848,348 @@ class StreamAnalyzer:
                 decision=None,
             )
 
+    def _log_image(self, tracker_id: int, role: str, action: str, detail: str) -> None:
+        print(
+            f"JEV imagem tracker={tracker_id} papel={role} acao={action} {detail}",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    def _log_image_once(self, book: dict[str, Any], key: str, tracker_id: int, action: str, detail: str) -> None:
+        token = f"{action}:{detail}"
+        if book.setdefault("logged", {}).get(key) == token:
+            return
+        book["logged"][key] = token
+        self._log_image(tracker_id, key, action, detail)
+
+    def _image_book(self, tracker_id: int, now: float) -> dict[str, Any]:
+        book = self._image_books.get(tracker_id)
+        if book is not None and now - float(book["seen"]) > 3.0:
+            self._log_image(tracker_id, "track", "reset", "motivo=pessoa_sumiu")
+            book = None
+        if book is None:
+            book = {
+                "born": now,
+                "seen": now,
+                "since": {},
+                "answers": {},
+                "failed": {},
+                "pending": set(),
+                "logged": {},
+                "phone_probe": None,
+            }
+            self._image_books[tracker_id] = book
+        else:
+            book["seen"] = now
+        return book
+
+    def _image_answer(self, tracker_id: int, name: str) -> dict[str, Any] | None:
+        with self._image_lock:
+            book = self._image_books.get(tracker_id)
+            if not book:
+                return None
+            saved = book["answers"].get(name)
+            return dict(saved) if saved else None
+
+    def _answer_blocks(self, saved: dict[str, Any] | None, now: float, local_status: str) -> bool:
+        if not saved:
+            return False
+        age = now - float(saved["at"])
+        if saved["status"] in {"sem", "uso"} and local_status in {"sem", "indeterminado", "uso"} and age >= IMAGE_REQUALIFY_SECONDS:
+            return False
+        return True
+
+    def _overlay_image_answers(self, state: dict[str, Any]) -> None:
+        facts = {
+            int(person["tracker_id"]): person
+            for person in (getattr(self, "_facts", None) or {}).get("persons") or []
+            if person.get("tracker_id") is not None
+        }
+        now = time.time()
+        with self._image_lock:
+            for person in state.get("persons") or []:
+                if person.get("tracker_id") is None or "ppe_judge" not in person:
+                    continue
+                tid = int(person["tracker_id"])
+                book = self._image_books.get(tid) or {}
+                fact_items = (facts.get(tid) or {}).get("items") or {}
+                judged = person["ppe_judge"]
+                missing: list[str] = []
+                for name, verdict in list(judged.items()):
+                    local = str(verdict.get("status") or "")
+                    fact = fact_items.get(name) or {}
+                    detected = int(fact.get("votes_present") or 0) > 0
+                    reason = needs_image_review(name, local, float(fact.get("conf") or 0), detected)
+                    saved = book.get("answers", {}).get(name)
+                    failed = name in book.get("failed", {})
+                    if saved and self._answer_blocks(saved, now, local):
+                        status = "sem" if saved["status"] == "sem" else "com"
+                        judged[name] = {**verdict, "status": status, "rule": "jev_imagem"}
+                    elif reason and not failed and local == "sem":
+                        judged[name] = {**verdict, "status": "indeterminado", "rule": "aguardando_jev"}
+                    if judged[name].get("status") == "sem":
+                        missing.append(name)
+                person["ppe_missing"] = missing
+                person["ppe_judge"] = judged
+
+    def _store_image_answers(self, tracker_id: int, questions: dict[str, str], result: dict[str, Any]) -> None:
+        answers = result.get("answers") if isinstance(result.get("answers"), dict) else {}
+        now = time.time()
+        with self._image_lock:
+            book = self._image_books.get(tracker_id)
+            if not book:
+                return
+            for name in questions:
+                flag = noul_is_true(answers.get(name))
+                if flag is None:
+                    book["failed"][name] = now
+                    continue
+                status = ("uso" if flag else "nao_uso") if name == "phone" else ("com" if flag else "sem")
+                book["answers"][name] = {"status": status, "at": now}
+                book["failed"].pop(name, None)
+
+    def _mark_image_failed(self, tracker_id: int, questions: dict[str, str]) -> None:
+        now = time.time()
+        with self._image_lock:
+            book = self._image_books.get(tracker_id)
+            if not book:
+                return
+            for name in questions:
+                book["failed"][name] = now
+
+    def _crop_origin(self, frame: np.ndarray, box: np.ndarray, pad_ratio: float) -> tuple[np.ndarray, int, int]:
+        height, width = frame.shape[:2]
+        x1, y1, x2, y2 = (float(value) for value in box)
+        pad_x = (x2 - x1) * pad_ratio
+        pad_y = (y2 - y1) * pad_ratio
+        left = max(0, int(x1 - pad_x))
+        top = max(0, int(y1 - pad_y))
+        right = min(width, int(x2 + pad_x))
+        bottom = min(height, int(y2 + pad_y))
+        if right - left < 8 or bottom - top < 8:
+            return frame.copy(), 0, 0
+        return frame[top:bottom, left:right].copy(), left, top
+
+    def _shift_boxes(self, boxes: list[np.ndarray], left: int, top: int) -> list[np.ndarray]:
+        shifted = []
+        for box in boxes:
+            shifted.append(np.array([
+                float(box[0]) - left,
+                float(box[1]) - top,
+                float(box[2]) - left,
+                float(box[3]) - top,
+            ], dtype=np.float32))
+        return shifted
+
+    def _pose_on_crop(self, crop: np.ndarray) -> dict[str, Any]:
+        if crop.size == 0 or not self._load_pose_model():
+            return {}
+        assert self._pose_model is not None
+        if self._pose_backend == "coreml":
+            result = self._pose_model(crop, verbose=False, conf=0.25, imgsz=160)[0]
+        else:
+            device = self._device if self._device in {"cpu", "mps", "cuda"} else "cpu"
+            result = self._pose_model(crop, verbose=False, conf=0.25, imgsz=160, device=device)[0]
+        if result.keypoints is None or result.boxes is None or len(result.boxes) == 0:
+            return {}
+        boxes = result.boxes.xyxy.cpu().numpy()
+        areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+        best = int(np.argmax(areas))
+        conf = result.keypoints.conf
+        scores = None if conf is None else conf.cpu().numpy()[best]
+        described = describe_pose(result.keypoints.xy.cpu().numpy()[best], scores)
+        described["ran"] = True
+        return described
+
+    def _nano_on_crop(self, crop: np.ndarray, hands: list[np.ndarray], faces: list[np.ndarray], heads: list[np.ndarray]) -> bool:
+        if crop.size == 0 or not self._load_phone_model("n"):
+            return False
+        resized = cv2.resize(crop, (320, 320), interpolation=cv2.INTER_LINEAR)
+        scale_x = crop.shape[1] / 320
+        scale_y = crop.shape[0] / 320
+        for box in self._phone_boxes(resized, "n", NANO_PHONE_CONF):
+            mapped = np.array([
+                float(box[0]) * scale_x,
+                float(box[1]) * scale_y,
+                float(box[2]) * scale_x,
+                float(box[3]) * scale_y,
+            ], dtype=np.float32)
+            if phone_near_body(mapped, hands, faces, heads) is not None:
+                return True
+        return False
+
+    def _schedule_image_review(self, frame: np.ndarray, people, parts) -> None:
+        if people.tracker_id is None or len(people) == 0:
+            return
+        now = time.time()
+        verdicts = {
+            int(person["tracker_id"]): person
+            for person in (self._verdict or {}).get("persons") or []
+            if person.get("tracker_id") is not None
+        }
+        facts = {
+            int(person["tracker_id"]): person
+            for person in (self._facts or {}).get("persons") or []
+            if person.get("tracker_id") is not None
+        }
+        for index, tracker_id in enumerate(people.tracker_id):
+            if tracker_id is None:
+                continue
+            tid = int(tracker_id)
+            with self._image_lock:
+                book = self._image_book(tid, now)
+                judged = (verdicts.get(tid) or {}).get("ppe") or {}
+                fact_items = (facts.get(tid) or {}).get("items") or {}
+                head_questions: dict[str, str] = {}
+                body_questions: dict[str, str] = {}
+                for name in self.config.required_ppe:
+                    verdict = judged.get(name) or {}
+                    local = str(verdict.get("status") or "")
+                    fact = fact_items.get(name) or {}
+                    detected = int(fact.get("votes_present") or 0) > 0
+                    reason = needs_image_review(name, local, float(fact.get("conf") or 0), detected)
+                    if reason is None:
+                        book["since"].pop(name, None)
+                        if name in HEAD_REVIEW or name in BODY_REVIEW:
+                            self._log_image_once(book, name, tid, "pulado", "motivo=marco_com")
+                        continue
+                    saved = book["answers"].get(name)
+                    if name in book["failed"]:
+                        self._log_image_once(book, name, tid, "pulado", "motivo=falha_anterior_usa_marco")
+                        continue
+                    if self._answer_blocks(saved, now, local):
+                        self._log_image_once(book, name, tid, "pulado", "motivo=resposta_no_track")
+                        continue
+                    if saved and not self._answer_blocks(saved, now, local):
+                        book["answers"].pop(name, None)
+                        self._log_image(tid, name, "reconsulta", "motivo=dez_minutos")
+                    if reason == "sempre":
+                        ready = review_is_due(book["born"], now)
+                    else:
+                        book["since"].setdefault(name, now)
+                        ready = review_is_due(book["since"].get(name), now)
+                    if not ready:
+                        self._log_image_once(book, name, tid, "pulado", "motivo=aguardando_persistencia")
+                        continue
+                    question = IMAGE_QUESTIONS.get(name)
+                    if not question:
+                        continue
+                    if name in HEAD_REVIEW:
+                        head_questions[name] = question
+                    elif name in BODY_REVIEW:
+                        body_questions[name] = question
+                phone_due = False
+                if self._smartphone.get("enabled") and "celular" not in book["pending"]:
+                    saved_phone = book["answers"].get("phone")
+                    if "phone" in book["failed"]:
+                        self._log_image_once(book, "phone", tid, "pulado", "motivo=falha_anterior")
+                    elif self._answer_blocks(saved_phone, now, "uso" if saved_phone and saved_phone.get("status") == "uso" else "nao_uso"):
+                        self._log_image_once(book, "phone", tid, "pulado", "motivo=resposta_no_track")
+                    elif review_is_due(book["born"], now) and (
+                        book["phone_probe"] is None or review_is_due(book["phone_probe"], now)
+                    ):
+                        phone_due = True
+                        book["phone_probe"] = now
+                        book["pending"].add("celular")
+                person_box = people.xyxy[index].copy()
+                head_boxes = self._body_boxes(person_box, parts, {"head"})
+                head_box = max(head_boxes, key=lambda box: float(box[3] - box[1])) if head_boxes else None
+                if head_questions and "cabeca" not in book["pending"] and head_box is not None:
+                    book["pending"].add("cabeca")
+                    head_crop = crop_box(frame, head_box, 0.5).copy()
+                    self._log_image(tid, "cabeca", "agendado", "motivo=" + ",".join(f"{name}:pedido" for name in head_questions))
+                else:
+                    head_crop = None
+                    if head_questions and head_box is None:
+                        self._log_image_once(book, "cabeca", tid, "pulado", "motivo=sem_cabeca")
+                if body_questions and "corpo" not in book["pending"]:
+                    book["pending"].add("corpo")
+                    body_crop = crop_box(frame, person_box, 0.08).copy()
+                    self._log_image(tid, "corpo", "agendado", "motivo=" + ",".join(body_questions))
+                else:
+                    body_crop = None
+                if phone_due:
+                    phone_crop, left, top = self._crop_origin(frame, person_box, 0.08)
+                    hands = self._shift_boxes(self._body_boxes(person_box, parts, {"hand"}), left, top)
+                    faces = self._shift_boxes(self._body_boxes(person_box, parts, {"face"}), left, top)
+                    heads = self._shift_boxes(self._body_boxes(person_box, parts, {"head"}), left, top)
+                    head_height = self._head_height(person_box, parts)
+                    self._log_image(tid, "celular", "sonda", "motivo=nano_ou_pose")
+                else:
+                    phone_crop = None
+                    hands = faces = heads = []
+                    head_height = 0.0
+            if head_crop is not None and head_questions:
+                threading.Thread(
+                    target=self._image_job,
+                    args=(tid, "cabeca", head_crop, dict(head_questions)),
+                    name="snitch-jev-cabeca",
+                    daemon=True,
+                ).start()
+            if body_crop is not None and body_questions:
+                threading.Thread(
+                    target=self._image_job,
+                    args=(tid, "corpo", body_crop, dict(body_questions)),
+                    name="snitch-jev-corpo",
+                    daemon=True,
+                ).start()
+            if phone_crop is not None:
+                threading.Thread(
+                    target=self._phone_probe_job,
+                    args=(tid, phone_crop, hands, faces, heads, head_height),
+                    name="snitch-jev-celular",
+                    daemon=True,
+                ).start()
+
+    def _image_job(self, tracker_id: int, role: str, crop: np.ndarray, questions: dict[str, str]) -> None:
+        try:
+            result = ask_image(encode_jpeg(crop), questions, trigger=role)
+            sha = str(result.get("sha256") or "")[:8]
+            resumo = ",".join(result.get("resumo") or [])
+            if result.get("status") == 200 and resumo:
+                self._store_image_answers(tracker_id, questions, result)
+                action = "cache" if result.get("cache") else "enviado"
+                self._log_image(
+                    tracker_id,
+                    role,
+                    action,
+                    f"sha={sha} resultado={resumo} enviadas={result.get('enviadas')} usd={result.get('usd')}",
+                )
+            else:
+                self._mark_image_failed(tracker_id, questions)
+                motivo = "sem_chave" if result.get("status") == 401 else f"status={result.get('status')}"
+                self._log_image(tracker_id, role, "falhou", f"motivo={motivo}")
+        except Exception as exc:  # noqa: BLE001
+            self._mark_image_failed(tracker_id, questions)
+            self._log_image(tracker_id, role, "falhou", f"motivo={exc.__class__.__name__}")
+        finally:
+            with self._image_lock:
+                book = self._image_books.get(tracker_id)
+                if book:
+                    book["pending"].discard(role)
+
+    def _phone_probe_job(
+        self,
+        tracker_id: int,
+        crop: np.ndarray,
+        hands: list[np.ndarray],
+        faces: list[np.ndarray],
+        heads: list[np.ndarray],
+        head_height: float,
+    ) -> None:
+        try:
+            pose = self._pose_on_crop(crop)
+            triggered = self._nano_on_crop(crop, hands, faces, heads) or phone_pose_trigger(pose, head_height)
+            if not triggered:
+                self._log_image(tracker_id, "celular", "pulado", "motivo=sem_gatilho")
+                return
+            self._image_job(tracker_id, "celular", crop, {"phone": IMAGE_QUESTIONS["phone"]})
+        finally:
+            with self._image_lock:
+                book = self._image_books.get(tracker_id)
+                if book:
+                    book["pending"].discard("celular")
+
     def _apply_verdict(self, state: dict[str, Any]) -> None:
         verdict = self._verdict if isinstance(getattr(self, "_verdict", None), dict) else {"persons": []}
         by_id = {
@@ -1849,6 +2205,7 @@ class StreamAnalyzer:
                 name for name, item in (judged.get("ppe") or {}).items() if item.get("status") == "sem"
             ]
             person["ppe_judge"] = judged.get("ppe") or {}
+        self._overlay_image_answers(state)
         state["judge"] = verdict
 
     def process_frame(self, frame: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
@@ -1856,10 +2213,11 @@ class StreamAnalyzer:
         people, parts = self._track_people_only(self._run_yolo(frame))
         if not self.config.mock:
             parts = self._refine_facial_ppe(frame, people, parts)
-            self._watch_phone(frame, people, parts)
             self._perceive(frame, people, parts)
         detect_elapsed = time.perf_counter() - detect_started
         self._inference_fps = round(1.0 / detect_elapsed, 1) if detect_elapsed > 0 else 0.0
+        if not self.config.mock:
+            self._schedule_image_review(frame, people, parts)
         zone_hits, dwell_exceeded, zone_dwell = self._zone_status(people, frame.shape[1], frame.shape[0])
         persons = self._persons_from_tracks(people, zone_hits, parts)
         state = build_jev_state(

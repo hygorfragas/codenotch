@@ -649,7 +649,7 @@ def probe(client: JevImageClient) -> bool:
 
 def main() -> int:
     LAB_DIR.mkdir(parents=True, exist_ok=True)
-    client = JevImageClient()
+    client = JevImageClient(ceiling_usd=0.50)
     if not probe(client):
         print("PROBE_FAILED", flush=True)
         return 2

@@ -132,7 +132,7 @@ class JevImageClient:
         self,
         cache_dir: Path | None = None,
         key_path: Path | None = None,
-        ceiling_usd: float = CEILING_USD,
+        ceiling_usd: float | None = None,
         price_usd: float = PRICE_PER_IMAGE_USD,
         transport: Transport | None = None,
         url: str = API_URL,
@@ -140,7 +140,7 @@ class JevImageClient:
         self.cache_dir = Path(cache_dir or CACHE_DIR)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.key_path = Path(key_path or KEY_PATH)
-        self.ceiling_usd = float(ceiling_usd)
+        self.ceiling_usd = None if ceiling_usd is None else float(ceiling_usd)
         self.price_usd = float(price_usd)
         self.transport = transport
         self.url = url
@@ -198,7 +198,10 @@ class JevImageClient:
                     "cache": True,
                     "usage": cached.get("usage"),
                 }
-        if float(self.ledger["usd"]) + self.price_usd >= self.ceiling_usd:
+        if (
+            self.ceiling_usd is not None
+            and float(self.ledger["usd"]) + self.price_usd >= self.ceiling_usd
+        ):
             return {
                 "sha256": digest,
                 "status": "teto",

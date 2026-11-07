@@ -18,6 +18,30 @@ PARTS = {
 }
 
 
+LOW_CONFIDENCE = 0.35
+IMAGE_PERSIST_SECONDS = 2.5
+IMAGE_REQUALIFY_SECONDS = 600.0
+EVENT_IMAGE_ITEMS = frozenset({"helmet", "vest", "gloves"})
+ALWAYS_IMAGE_ITEMS = frozenset({"goggles", "glasses"})
+
+
+def needs_image_review(name: str, status: str, confidence: float, detected: bool) -> str | None:
+    """Motivo para uma imagem ao JEV, ou None quando o marco basta."""
+    if name in ALWAYS_IMAGE_ITEMS:
+        return "sempre"
+    if name not in EVENT_IMAGE_ITEMS:
+        return None
+    if status == "sem":
+        return "sem"
+    if status == "indeterminado" or (detected and confidence < LOW_CONFIDENCE):
+        return "duvida"
+    return None
+
+
+def review_is_due(started_at: float | None, now: float, persist: float = IMAGE_PERSIST_SECONDS) -> bool:
+    return started_at is not None and (now - started_at) >= persist
+
+
 def distance_band(head_height_px: float) -> str:
     if head_height_px >= 110:
         return "near"
